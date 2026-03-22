@@ -10,28 +10,35 @@ from .serializers import (
 )
 
 
+import traceback
+import logging
+
+logger = logging.getLogger(__name__)
+
 class CheckoutView(generics.CreateAPIView):
-    """
-    POST /api/billing/checkout/
-    Creates a sale bill, locks stock via select_for_update(),
-    deducts using FEFO, freezes the snapshot, returns full bill.
-    """
     permission_classes = [IsClerkOrHigher]
 
     def get_serializer_class(self):
         return CheckoutSerializer
 
     def create(self, request, *args, **kwargs):
-        serializer = CheckoutSerializer(
-            data=request.data,
-            context={'request': request}
-        )
-        serializer.is_valid(raise_exception=True)
-        bill = serializer.save()
-        return Response(
-            SalesBillReadSerializer(bill).data,
-            status=status.HTTP_201_CREATED
-        )
+        try:
+            serializer = CheckoutSerializer(
+                data=request.data,
+                context={'request': request}
+            )
+            serializer.is_valid(raise_exception=True)
+            bill = serializer.save()
+            return Response(
+                SalesBillReadSerializer(bill).data,
+                status=status.HTTP_201_CREATED
+            )
+        except Exception as e:
+            logger.error(f"Checkout error: {traceback.format_exc()}")
+            return Response(
+                {"error": str(e), "traceback": traceback.format_exc()},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class SalesBillListView(generics.ListAPIView):
