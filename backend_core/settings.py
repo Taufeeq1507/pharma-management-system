@@ -87,6 +87,7 @@ WSGI_APPLICATION = 'backend_core.wsgi.application'
 #         'PORT': '5432',
 #     }
 # }
+DATABASE_URL = config('DATABASE_URL', default=None)  
 if DATABASE_URL:
     # Railway provides this automatically
     DATABASES = {
