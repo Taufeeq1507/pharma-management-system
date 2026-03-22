@@ -13,8 +13,6 @@ class PharmacyMiddleware(MiddlewareMixin):
                     getattr(request.user, 'pharmacy', None),
                     getattr(request.user, 'is_superuser', False)
                 )
-                from .utils import get_current_pharmacy
-                print(f"DEBUG VERIFY: get_current_pharmacy()={get_current_pharmacy()}")
             return
 
         # For all API requests — use JWT only
@@ -23,12 +21,9 @@ class PharmacyMiddleware(MiddlewareMixin):
             user_auth_tuple = auth.authenticate(request)
             if user_auth_tuple is not None:
                 user, token = user_auth_tuple
-                print(f"DEBUG MIDDLEWARE: user={user.phone_number} pharmacy={user.pharmacy} pharmacy_id={user.pharmacy_id}")
                 set_current_user_context(
                     getattr(user, 'pharmacy', None),
                     getattr(user, 'is_superuser', False)
                 )
-            else:
-                print(f"DEBUG MIDDLEWARE: no user authenticated for {request.path}")
-        except Exception as e:
-            print(f"DEBUG MIDDLEWARE: exception {e}")
+        except Exception:
+            pass

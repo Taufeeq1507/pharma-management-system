@@ -6,26 +6,17 @@ from .utils import get_current_pharmacy
 
 
 class PharmacyManager(models.Manager):
-    """
-    This is the Magic Translator. Any model that uses this manager 
-    will automatically filter its data based on the logged-in user.
-    """
     def get_queryset(self):
         from .utils import get_current_pharmacy, is_current_user_superuser
         
-        # Superadmins see everything
         if is_current_user_superuser():
             return super().get_queryset()
             
         current_pharmacy = get_current_pharmacy()
-        print(f"DEBUG MANAGER: current_pharmacy={current_pharmacy}, model={self.model.__name__}")
         if current_pharmacy:
-            # If a pharmacy is on the notepad, filter the data!
             return super().get_queryset().filter(pharmacy=current_pharmacy)
         
-        # Unauthenticated users (no pharmacy, no superuser) get NOTHING
         return super().get_queryset().none()
-
 
 class TenantModel(models.Model):
     """
