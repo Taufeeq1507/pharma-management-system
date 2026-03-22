@@ -1,0 +1,14 @@
+# .gitignore
+.env
+__pycache__/
+*.pyc
+*.pyo
+db.sqlite3
+.DS_Store
+venv/
+env/
+*.egg-info/
+dist/
+build/
+full_codebase.md
+full_codebase.txt
