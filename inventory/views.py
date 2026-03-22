@@ -37,10 +37,11 @@ class SupplierViewSet(viewsets.ModelViewSet):
 
 class MedicineMasterViewSet(viewsets.ModelViewSet):
     """List, create, and update medicines. Soft-delete via is_active=False — no hard deletes."""
-    queryset = MedicineMaster.objects.filter(is_active=True)
     serializer_class = MedicineMasterSerializer
     permission_classes = [IsClerkOrHigher]
     http_method_names = ['get', 'post', 'put', 'patch']
+    def get_queryset(self):
+        return MedicineMaster.objects.filter(is_active=True)
 
 
 # ---------------------------------------------------------------------------
@@ -55,10 +56,11 @@ class PurchaseBillViewSet(viewsets.ModelViewSet):
 
     Bills are IMMUTABLE once posted — no PATCH/PUT/DELETE.
     """
-    queryset = PurchaseBill.objects.all().prefetch_related('items')
     serializer_class = PurchaseBillSerializer
     permission_classes = [IsOwnerOrHigher]
     http_method_names = ['get', 'post']
+    def get_queryset(self):
+        return PurchaseBill.objects.all().prefetch_related('items')
 
 
 # ---------------------------------------------------------------------------
