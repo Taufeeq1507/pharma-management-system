@@ -117,10 +117,7 @@ class CheckoutSerializer(serializers.Serializer):
             # select_for_update() locks these rows until the transaction completes
             # Any other checkout trying to touch the same batches must wait
             batches = (
-                InventoryBatch.objects
-                .select_for_update()
-                .select_related('medicine')
-                .filter(
+                InventoryBatch.objects.select_related('medicine').filter(
                     medicine_id           = medicine_id,
                     available_quantity__gt = 0,
                     medicine__is_active   = True,
