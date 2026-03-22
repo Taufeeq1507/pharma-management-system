@@ -28,10 +28,11 @@ from .serializers import (
 
 class SupplierViewSet(viewsets.ModelViewSet):
     """List, create, and update suppliers. Soft-delete via is_active=False — no hard deletes."""
-    queryset = Supplier.objects.filter(is_active=True)
     serializer_class = SupplierSerializer
     permission_classes = [IsClerkOrHigher]
     http_method_names = ['get', 'post', 'put', 'patch']
+    def get_queryset(self):
+        return Supplier.objects.filter(is_active=True)
 
 
 class MedicineMasterViewSet(viewsets.ModelViewSet):
