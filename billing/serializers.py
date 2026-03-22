@@ -161,7 +161,7 @@ class CheckoutSerializer(serializers.Serializer):
                 .select_for_update()
                 .get(pk=batch.pk)
             )
-        deduction_plan.append((locked_batch, qty))
+            deduction_plan.append((locked_batch, qty))
         sales_items_to_create = []
         items_snapshot        = []
         subtotal              = Decimal('0.00')
