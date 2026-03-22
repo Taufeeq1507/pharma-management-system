@@ -3,7 +3,7 @@ from django.db import transaction
 from decimal import Decimal
 from .models import SalesBill, SalesItem, SalesReturn
 from inventory.models import InventoryBatch, PurchaseItem
-
+from accounts.utils import get_current_pharmacy
 
 # ── Read serializers ───────────────────────────────────────────────────────────
 
@@ -247,8 +247,9 @@ class CheckoutSerializer(serializers.Serializer):
         )
 
         # ── Step 3: Bulk create all SalesItem rows ─────────────────────────
+        pharmacy = get_current_pharmacy()
         SalesItem.objects.bulk_create([
-            SalesItem(sales_bill=bill, **item_data)
+            SalesItem(sales_bill=bill, pharmacy=pharmacy, **item_data)
             for item_data in sales_items_to_create
         ])
 
