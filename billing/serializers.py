@@ -151,10 +151,17 @@ class CheckoutSerializer(serializers.Serializer):
     @transaction.atomic
     def create(self, validated_data):
         request        = self.context['request']
-        deduction_plan = validated_data.pop('_deduction_plan')
+        raw_plan       = validated_data.pop('_deduction_plan')
         validated_data.pop('items')
         discount       = validated_data.get('discount', Decimal('0.00'))
-
+        deduction_plan = []
+        for batch, qty in raw_plan:
+            locked_batch = (
+                InventoryBatch.objects
+                .select_for_update()
+                .get(pk=batch.pk)
+            )
+        deduction_plan.append((locked_batch, qty))
         sales_items_to_create = []
         items_snapshot        = []
         subtotal              = Decimal('0.00')
