@@ -13,6 +13,8 @@ class PharmacyMiddleware(MiddlewareMixin):
                     getattr(request.user, 'pharmacy', None),
                     getattr(request.user, 'is_superuser', False)
                 )
+                from .utils import get_current_pharmacy
+                print(f"DEBUG VERIFY: get_current_pharmacy()={get_current_pharmacy()}")
             return
 
         # For all API requests — use JWT only

@@ -18,6 +18,7 @@ class PharmacyManager(models.Manager):
             return super().get_queryset()
             
         current_pharmacy = get_current_pharmacy()
+        print(f"DEBUG MANAGER: current_pharmacy={current_pharmacy}, model={self.model.__name__}")
         if current_pharmacy:
             # If a pharmacy is on the notepad, filter the data!
             return super().get_queryset().filter(pharmacy=current_pharmacy)
