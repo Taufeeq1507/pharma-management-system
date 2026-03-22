@@ -129,13 +129,19 @@ class CheckoutSerializer(serializers.Serializer):
                 errors[str(medicine_id)] = "No stock available for this medicine."
                 continue
 
-            for batch in batches:
+            batch_list = list(batches)
+            print(f"DEBUG batches count: {len(batch_list)}")
+            for b in batch_list:
+                print(f"DEBUG {b.batch_number} qty:{b.available_quantity} expiry:{b.expiry_date}")
+
+            for batch in batch_list:
                 if qty_remaining <= 0:
                     break
                 deduct = min(batch.available_quantity, qty_remaining)
                 deduction_plan.append((batch, deduct))
                 qty_remaining -= deduct
 
+                print(f"DEBUG deduction_plan: {[(b.batch_number, q) for b, q in deduction_plan]}")
             if qty_remaining > 0:
                 errors[str(medicine_id)] = (
                     f"Insufficient stock. Requested {qty_needed}, "
