@@ -124,13 +124,15 @@ class PurchaseBillSerializer(serializers.ModelSerializer):
 # ---------------------------------------------------------------------------
 
 class InventoryBatchSerializer(serializers.ModelSerializer):
-    medicine_name    = serializers.CharField(source='medicine.name',    read_only=True)
-    medicine_company = serializers.CharField(source='medicine.company', read_only=True)
+    medicine_name    = serializers.CharField(source='medicine.name',      read_only=True)
+    medicine_company = serializers.CharField(source='medicine.company',   read_only=True)
+    packaging        = serializers.CharField(source='medicine.packaging', read_only=True)  # ← ADD THIS
 
     class Meta:
         model = InventoryBatch
         fields = [
             'id', 'medicine', 'medicine_name', 'medicine_company',
+            'packaging',                                                   # ← ADD THIS
             'batch_number', 'expiry_date', 'available_quantity',
             'gst_percentage', 'mrp', 'shelf'
         ]
