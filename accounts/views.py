@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.exceptions import NotFound
 from .serializers import (
     RegisterPharmacySerializer, UserSerializer,
     PharmacySerializer, StaffCreateSerializer
@@ -31,7 +32,8 @@ class RegisterPharmacyView(generics.CreateAPIView):
             "user": {
                 "id": str(user.id),
                 "phone_number": user.phone_number,
-                "pharmacy_name": user.pharmacy.name,
+                # Bug 1 fix: guard against pharmacy being None
+                "pharmacy_name": user.pharmacy.name if user.pharmacy else None,
                 "privilege_level": user.privilege_level
             },
             "tokens": {
@@ -54,7 +56,11 @@ class UpdatePharmacyView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsPharmacyOwnerOrSupport]
 
     def get_object(self):
-        return self.request.user.pharmacy
+        # Bug 5 fix: guard against Chain Owner / users with no pharmacy FK
+        pharmacy = self.request.user.pharmacy
+        if pharmacy is None:
+            raise NotFound("No pharmacy is linked to your account.")
+        return pharmacy
 
 
 class StaffCreateView(generics.ListCreateAPIView):
@@ -66,8 +72,12 @@ class StaffCreateView(generics.ListCreateAPIView):
         return UserSerializer
 
     def get_queryset(self):
-        return get_user_model().objects.filter(
-            pharmacy=self.request.user.pharmacy
+        User = get_user_model()
+        pharmacy = self.request.user.pharmacy
+        if pharmacy is None:
+            return User.objects.none()
+        return User.objects.filter(
+            pharmacy=pharmacy
         ).order_by('privilege_level', 'phone_number')
 
 

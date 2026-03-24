@@ -34,9 +34,10 @@ class CheckoutView(generics.CreateAPIView):
                 status=status.HTTP_201_CREATED
             )
         except Exception as e:
+            # Bug 8 fix: log internally, never expose traceback to clients
             logger.error(f"Checkout error: {traceback.format_exc()}")
             return Response(
-                {"error": str(e), "traceback": traceback.format_exc()},
+                {"error": "A server error occurred during checkout. Please try again."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

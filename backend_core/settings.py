@@ -173,3 +173,24 @@ SPECTACULAR_SETTINGS = {
     'DESCRIPTION': 'API for Pharma Management System',
     'VERSION': '1.0.0',
 }
+
+# ── JWT Settings ──────────────────────────────────────────────────────────────
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    # Access token expires quickly — short window limits abuse if stolen
+    'ACCESS_TOKEN_LIFETIME':  timedelta(minutes=60),
+    # Refresh token is long-lived but auto-rotated on each use
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    # Each refresh issues a NEW token and blacklists the old one
+    'ROTATE_REFRESH_TOKENS':  True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    # Algorithm: HS256 is fine for a single-server deployment
+    'ALGORITHM': 'HS256',
+    'AUTH_HEADER_TYPES': ('Bearer',),
+}
+
+# ── CORS ──────────────────────────────────────────────────────────────────────
+# Use CORS_ALLOW_ALL_ORIGINS=True ONLY in local dev.
+# In production set this to False and whitelist specific frontend origins.
+CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='http://localhost:5173').split(',')

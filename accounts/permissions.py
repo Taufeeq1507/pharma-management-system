@@ -1,4 +1,5 @@
 from rest_framework import permissions
+from django.core.exceptions import ObjectDoesNotExist
 
 
 class IsClerkOrHigher(permissions.BasePermission):
@@ -58,9 +59,10 @@ class IsPharmacyOwnerOrSupport(permissions.BasePermission):
     """
     def has_permission(self, request, view):
         user = request.user
-        return bool(
-            user and
-            user.is_authenticated and
-            user.privilege_level in [2, 3] and
-            getattr(user, 'pharmacy', None) is not None
-        )
+        if not (user and user.is_authenticated and user.privilege_level in [2, 3]):
+            return False
+        # Bug 9 fix: guard against a deleted pharmacy (FK set but row gone)
+        try:
+            return user.pharmacy is not None
+        except ObjectDoesNotExist:
+            return False

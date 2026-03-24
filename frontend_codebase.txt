@@ -3914,7 +3914,10 @@ export default function Layout() {
                   {user?.phone_number}
                 </div>
                 <div style={{ fontSize: '9px', color: 'var(--accent-green)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em' }}>
-                  {user?.privilege_level >= 2 ? 'OWNER' : 'CLERK'}
+                  {user?.privilege_level === 5 ? 'ADMIN' :
+                   user?.privilege_level === 4 ? 'CHAIN OWNER' :
+                   user?.privilege_level === 3 ? 'SUPPORT' :
+                   user?.privilege_level === 2 ? 'OWNER' : 'CLERK'}
                 </div>
               </div>
               <button onClick={handleLogout} style={{ fontSize: '9px', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', color: 'var(--text-muted)', padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'none', cursor: 'pointer' }}>
@@ -5807,12 +5810,13 @@ import { useAuth } from '../context/AuthContext'
 import api from '../api/config'
 import useWindowSize from '../hooks/useWindowSize'
 
-const LEVEL_LABEL = { 1: 'CLERK', 2: 'OWNER', 3: 'SUPPORT', 4: 'ADMIN' }
+const LEVEL_LABEL = { 1: 'CLERK', 2: 'OWNER', 3: 'SUPPORT', 4: 'CHAIN OWNER', 5: 'ADMIN' }
 const LEVEL_COLOR = {
-  1: { bg: 'rgba(59,130,246,0.12)', text: 'var(--accent-blue)' },
-  2: { bg: 'rgba(34,197,94,0.12)',  text: 'var(--accent-green)' },
-  3: { bg: 'rgba(245,158,11,0.12)', text: 'var(--accent-amber)' },
-  4: { bg: 'rgba(239,68,68,0.12)',  text: 'var(--accent-red)' },
+  1: { bg: 'rgba(59,130,246,0.12)',  text: 'var(--accent-blue)' },
+  2: { bg: 'rgba(34,197,94,0.12)',   text: 'var(--accent-green)' },
+  3: { bg: 'rgba(245,158,11,0.12)',  text: 'var(--accent-amber)' },
+  4: { bg: 'rgba(168,85,247,0.12)',  text: '#a855f7' },
+  5: { bg: 'rgba(239,68,68,0.12)',   text: 'var(--accent-red)' },
 }
 
 export default function Staff() {

@@ -23,9 +23,6 @@ class PharmacyManager(models.Manager):
 
 
 class TenantModel(models.Model):
-    """
-    MASTER BLUEPRINT: Automatically filters reads AND automatically stamps writes.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     pharmacy = models.ForeignKey('accounts.Pharmacy', on_delete=models.CASCADE, related_name="%(class)s_set")
 
@@ -44,16 +41,16 @@ class TenantModel(models.Model):
             else:
                 if current_pharmacy:
                     self.pharmacy = current_pharmacy
+                elif getattr(self, 'pharmacy_id', None) is None:
+                    raise ValueError(
+                        f"Cannot save {self.__class__.__name__}: no pharmacy in context. "
+                        "Chain owners must select a branch before creating records."
+                    )
 
         super().save(*args, **kwargs)
 
 
 class Organization(models.Model):
-    """
-    The parent entity for a chain of pharmacies.
-    A standalone pharmacy also gets an Organization — with just one branch.
-    This keeps the data model uniform.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
     subscription_plan = models.CharField(max_length=50, default="Tier 2")
@@ -95,7 +92,7 @@ class CustomUserManager(BaseUserManager):
     def create_superuser(self, phone_number, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
-        extra_fields.setdefault('privilege_level', 5)  # 5 = SaaS Admin
+        extra_fields.setdefault('privilege_level', 5)
         return self.create_user(phone_number, password, **extra_fields)
 
 

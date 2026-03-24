@@ -248,7 +248,6 @@ class SupplierReturnPolicy(TenantModel):
         on_delete=models.CASCADE,
         related_name='return_policy'
     )
-    # Supplier accepts returns until this many days before expiry
     return_window_days = models.IntegerField(
         default=90,
         help_text="Days before expiry date by which returns must be initiated"
@@ -257,12 +256,18 @@ class SupplierReturnPolicy(TenantModel):
         default=True,
         help_text="Does this supplier issue GST credit notes on returns?"
     )
-    # How many days advance notice YOU need to arrange the physical return
     advance_notice_days = models.IntegerField(
         default=14,
         help_text="Alert fires this many days before the return window closes"
     )
     notes = models.TextField(blank=True, null=True)
+
+    def save(self, *args, **kwargs):
+        # Bug 4 fix: derive pharmacy from supplier so Celery tasks (which have
+        # no request context) don't raise ValueError from TenantModel.save().
+        if self._state.adding and getattr(self, 'pharmacy_id', None) is None:
+            self.pharmacy = self.supplier.pharmacy
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.supplier.name} — return by {self.return_window_days}d before expiry"
@@ -345,6 +350,13 @@ class ReturnAlert(TenantModel):
     )
     actioned_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        # Bug 4 fix: derive pharmacy from the linked InventoryBatch's pharmacy
+        # so Celery alert-generation tasks (no request context) don't crash.
+        if self._state.adding and getattr(self, 'pharmacy_id', None) is None:
+            self.pharmacy = self.inventory_batch.pharmacy
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return (

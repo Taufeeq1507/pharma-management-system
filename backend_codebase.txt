@@ -11,6 +11,7 @@ Pharma-Management-System
 │   ├── migrations
 │   │   ├── 0001_initial.py
 │   │   ├── 0002_pharmacy_settings.py
+│   │   ├── 0003_organization_customuser_organization_and_more.py
 │   │   └── __init__.py
 │   ├── models.py
 │   ├── permissions.py
@@ -47,6 +48,7 @@ Pharma-Management-System
 │   │   ├── 0002_medicinemaster_default_gst_percentage_and_more.py
 │   │   ├── 0003_shelflocation_inventorybatch_shelf_stockadjustment_and_more.py
 │   │   ├── 0004_purchasereturn_mrp.py
+│   │   ├── 0005_returnalert_supplierreturnpolicy.py
 │   │   └── __init__.py
 │   ├── models.py
 │   ├── serializers.py
@@ -215,20 +217,20 @@ from django.utils.deprecation import MiddlewareMixin
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from .utils import set_current_user_context
 
+
 class PharmacyMiddleware(MiddlewareMixin):
     def process_request(self, request):
-        set_current_user_context(None, False)
+        set_current_user_context(None, False, None)
 
-        # Only use session auth for Django Admin
         if request.path.startswith('/admin/'):
             if hasattr(request, 'user') and request.user.is_authenticated:
                 set_current_user_context(
                     getattr(request.user, 'pharmacy', None),
-                    getattr(request.user, 'is_superuser', False)
+                    getattr(request.user, 'is_superuser', False),
+                    organization=getattr(request.user, 'organization', None)
                 )
             return
 
-        # For all API requests — use JWT only
         auth = JWTAuthentication()
         try:
             user_auth_tuple = auth.authenticate(request)
@@ -236,7 +238,8 @@ class PharmacyMiddleware(MiddlewareMixin):
                 user, token = user_auth_tuple
                 set_current_user_context(
                     getattr(user, 'pharmacy', None),
-                    getattr(user, 'is_superuser', False)
+                    getattr(user, 'is_superuser', False),
+                    organization=getattr(user, 'organization', None)
                 )
         except Exception:
             pass
@@ -251,55 +254,74 @@ from django.db import models
 from .utils import get_current_pharmacy
 
 
-
 class PharmacyManager(models.Manager):
     def get_queryset(self):
-        from .utils import get_current_pharmacy, is_current_user_superuser
-        
+        from .utils import get_current_pharmacy, get_current_organization, is_current_user_superuser
+
         if is_current_user_superuser():
             return super().get_queryset()
-            
+
         current_pharmacy = get_current_pharmacy()
         if current_pharmacy:
             return super().get_queryset().filter(pharmacy=current_pharmacy)
-        
+
+        current_org = get_current_organization()
+        if current_org:
+            return super().get_queryset().filter(pharmacy__organization=current_org)
+
         return super().get_queryset().none()
+
 
 class TenantModel(models.Model):
     """
     MASTER BLUEPRINT: Automatically filters reads AND automatically stamps writes.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    # 1. Removed editable=False so it shows up in forms/admin panels. 
-    # Normal users have this forced via save(), but Superadmins can now edit it directly.
     pharmacy = models.ForeignKey('accounts.Pharmacy', on_delete=models.CASCADE, related_name="%(class)s_set")
-    
+
     objects = PharmacyManager()
 
     class Meta:
         abstract = True
 
-    # 2. THE AUTOMATIC WRITER
     def save(self, *args, **kwargs):
-        # If this is a brand new object being created
         if self._state.adding:
             from .utils import get_current_pharmacy, is_current_user_superuser
             current_pharmacy = get_current_pharmacy()
-            
-            # 1. Check if the person is a superuser (e.g. Django Admin). 
-            # If so, and they MANUALLY picked a pharmacy from the dropdown, let them keep it!
+
             if is_current_user_superuser() and getattr(self, 'pharmacy_id', None) is not None:
-                pass # Don't overwrite the Superadmin's choice
+                pass
             else:
-                # 2. For everyone else (or if Superadmin left it blank), 
-                # strictly crush any submitted ID and force it to their own actual pharmacy.
                 if current_pharmacy:
                     self.pharmacy = current_pharmacy
-                
-        # Now proceed with the normal Django save process
+
         super().save(*args, **kwargs)
+
+
+class Organization(models.Model):
+    """
+    The parent entity for a chain of pharmacies.
+    A standalone pharmacy also gets an Organization — with just one branch.
+    This keeps the data model uniform.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255)
+    subscription_plan = models.CharField(max_length=50, default="Tier 2")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name
+
+
 class Pharmacy(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='branches'
+    )
     name = models.CharField(max_length=255)
     gstin = models.CharField(max_length=15, unique=True, null=True, blank=True)
     drug_license_no = models.CharField(max_length=100, unique=True, null=True, blank=True)
@@ -309,6 +331,7 @@ class Pharmacy(models.Model):
 
     def __str__(self):
         return self.name
+
 
 class CustomUserManager(BaseUserManager):
     def create_user(self, phone_number, password=None, **extra_fields):
@@ -322,16 +345,29 @@ class CustomUserManager(BaseUserManager):
     def create_superuser(self, phone_number, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
-        extra_fields.setdefault('privilege_level', 4) # 4 = Admin
+        extra_fields.setdefault('privilege_level', 5)  # 5 = SaaS Admin
         return self.create_user(phone_number, password, **extra_fields)
 
+
 class CustomUser(AbstractUser):
-    username = None 
-    
+    username = None
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     phone_number = models.CharField(max_length=15, unique=True)
     pharmacy = models.ForeignKey(Pharmacy, on_delete=models.CASCADE, null=True, blank=True)
-    privilege_level = models.IntegerField(default=1) # 1: Clerk, 2: Owner, 3: Support, 4: Admin
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='members'
+    )
+    privilege_level = models.IntegerField(default=1)
+    # 1: Clerk
+    # 2: Branch Owner / Standalone Owner
+    # 3: Support Staff
+    # 4: Chain Owner
+    # 5: SaaS Admin
 
     USERNAME_FIELD = 'phone_number'
     REQUIRED_FIELDS = []
@@ -347,37 +383,68 @@ File: accounts/permissions.py
 
 from rest_framework import permissions
 
+
 class IsClerkOrHigher(permissions.BasePermission):
-    """Level 1+: Clerks, Owners, Support, and Admins can access."""
+    """Level 1+"""
     def has_permission(self, request, view):
-        # 1. Must be logged in via JWT
-        # 2. Privilege level must be 1 or greater
-        return bool(request.user and request.user.is_authenticated and request.user.privilege_level >= 1)
+        return bool(
+            request.user and
+            request.user.is_authenticated and
+            request.user.privilege_level >= 1
+        )
+
 
 class IsOwnerOrHigher(permissions.BasePermission):
-    """Level 2+: Only Owners, Support, and Admins can access."""
+    """Level 2+"""
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.privilege_level >= 2)
+        return bool(
+            request.user and
+            request.user.is_authenticated and
+            request.user.privilege_level >= 2
+        )
+
 
 class IsSupportOrHigher(permissions.BasePermission):
-    """Level 3+: Only Support and Admins can access."""
+    """Level 3+"""
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.privilege_level >= 3)
+        return bool(
+            request.user and
+            request.user.is_authenticated and
+            request.user.privilege_level >= 3
+        )
+
+
+class IsChainOwnerOrHigher(permissions.BasePermission):
+    """Level 4+: Chain Owners and SaaS Admin"""
+    def has_permission(self, request, view):
+        return bool(
+            request.user and
+            request.user.is_authenticated and
+            request.user.privilege_level >= 4
+        )
+
 
 class IsAdmin(permissions.BasePermission):
-    """Level 4: ONLY System Admins can access."""
+    """Level 5: ONLY SaaS Admins"""
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.privilege_level == 4)
+        return bool(
+            request.user and
+            request.user.is_authenticated and
+            request.user.privilege_level == 5
+        )
+
 
 class IsPharmacyOwnerOrSupport(permissions.BasePermission):
-    """Level 2/3: ONLY Owners and Support staff belonging to a pharmacy can access. Admins are blocked."""
+    """
+    Level 2 or 3, must have a pharmacy attached.
+    Used for pharmacy-specific management endpoints.
+    """
     def has_permission(self, request, view):
-        # Must be logged in, must be level 2 or 3, AND must actually have a pharmacy attached.
         user = request.user
         return bool(
-            user and 
-            user.is_authenticated and 
-            user.privilege_level in [2, 3] and 
+            user and
+            user.is_authenticated and
+            user.privilege_level in [2, 3] and
             getattr(user, 'pharmacy', None) is not None
         )
 
@@ -387,63 +454,61 @@ File: accounts/serializers.py
 
 from rest_framework import serializers
 from django.db import transaction
-from .models import CustomUser, Pharmacy
+from .models import CustomUser, Pharmacy, Organization
 
 
 class PharmacySerializer(serializers.ModelSerializer):
     class Meta:
         model = Pharmacy
         fields = ['id', 'name', 'gstin', 'drug_license_no', 'subscription_plan', 'settings']
-        # Critical Security: Prevent Owners from upgrading their own plan for free
         read_only_fields = ['id', 'subscription_plan', 'settings']
 
+
 class UserSerializer(serializers.ModelSerializer):
-    # This tells Django: "Don't just give me the ID, give me the whole Pharmacy object"
-    pharmacy = PharmacySerializer(read_only=True) 
+    pharmacy = PharmacySerializer(read_only=True)
 
     class Meta:
         model = CustomUser
         fields = ['id', 'phone_number', 'privilege_level', 'pharmacy']
 
 
-
 class RegisterPharmacySerializer(serializers.Serializer):
-    # 1. Pharmacy specific fields
     pharmacy_name = serializers.CharField(max_length=255)
     gstin = serializers.CharField(max_length=15, required=False, allow_blank=True)
     drug_license_no = serializers.CharField(max_length=100, required=False, allow_blank=True)
-    
-    # 2. User specific fields
     phone_number = serializers.CharField(max_length=15)
-    password = serializers.CharField(write_only=True) # write_only ensures it's never sent back in API responses
+    password = serializers.CharField(write_only=True)
 
     def validate_phone_number(self, value):
-        """Check if the phone number is already registered in the database"""
         if CustomUser.objects.filter(phone_number=value).exists():
             raise serializers.ValidationError("A user with this phone number already exists.")
         return value
 
     def create(self, validated_data):
-        # The Atomic block ensures both are created, or neither is created.
         with transaction.atomic():
-            # Step A: Create the Pharmacy in the database
             gstin = validated_data.get('gstin', '')
             drug_license_no = validated_data.get('drug_license_no', '')
-            
+
+            # Create Organization first — every pharmacy belongs to one
+            org = Organization.objects.create(
+                name=validated_data['pharmacy_name']
+            )
+
             pharmacy = Pharmacy.objects.create(
                 name=validated_data['pharmacy_name'],
                 gstin=gstin if gstin else None,
-                drug_license_no=drug_license_no if drug_license_no else None
+                drug_license_no=drug_license_no if drug_license_no else None,
+                organization=org
             )
-            
-            # Step B: Create the Owner in the database and link them to the Pharmacy
+
             user = CustomUser.objects.create_user(
                 phone_number=validated_data['phone_number'],
                 password=validated_data['password'],
                 pharmacy=pharmacy,
-                privilege_level=2  # Privilege Level 2 = Owner
+                organization=org,
+                privilege_level=2  # Standalone owner
             )
-            
+
         return user
 
 
@@ -456,21 +521,21 @@ class StaffCreateSerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
 
     def create(self, validated_data):
-        # 1. Grab the logged-in Owner's pharmacy from the request context
         request = self.context.get('request')
         owner_pharmacy = request.user.pharmacy
 
-        # 2. Safety Check: Force the privilege level to 1 (Clerk) if not provided, 
-        # and prevent them from creating an Admin or Support (Level > 2)
         privilege_level = validated_data.get('privilege_level', 1)
+        # Owners (level 2) can only create clerks (1) or co-owners (2)
         if privilege_level > 2:
-            raise serializers.ValidationError({"privilege_level": "You do not have permission to create users with a privilege level higher than Owner (2)."})
+            raise serializers.ValidationError({
+                "privilege_level": "You cannot create users with privilege level higher than 2."
+            })
 
-        # 3. Create the user safely with a hashed password
         user = CustomUser.objects.create_user(
             phone_number=validated_data['phone_number'],
             password=validated_data['password'],
-            pharmacy=owner_pharmacy, # Lock them to the exact same pharmacy
+            pharmacy=owner_pharmacy,
+            organization=owner_pharmacy.organization,
             privilege_level=privilege_level
         )
         return user
@@ -508,15 +573,22 @@ File: accounts/utils.py
 
 import threading
 
-# This is the isolated notepad for each server worker
 _thread_locals = threading.local()
 
-def set_current_user_context(pharmacy, is_superuser=False):
+
+def set_current_user_context(pharmacy, is_superuser=False, organization=None):
     _thread_locals.pharmacy = pharmacy
     _thread_locals.is_superuser = is_superuser
+    _thread_locals.organization = organization
+
 
 def get_current_pharmacy():
     return getattr(_thread_locals, 'pharmacy', None)
+
+
+def get_current_organization():
+    return getattr(_thread_locals, 'organization', None)
+
 
 def is_current_user_superuser():
     return getattr(_thread_locals, 'is_superuser', False)
@@ -525,38 +597,34 @@ def is_current_user_superuser():
 File: accounts/views.py
 ================================================================================
 
+from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.response import Response
 from rest_framework import generics, status
-from rest_framework.permissions import AllowAny,IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
-from .serializers import RegisterPharmacySerializer, UserSerializer, PharmacySerializer, StaffCreateSerializer
+from .serializers import (
+    RegisterPharmacySerializer, UserSerializer,
+    PharmacySerializer, StaffCreateSerializer
+)
 from .permissions import IsOwnerOrHigher, IsPharmacyOwnerOrSupport
-# This view will take phone_number and password and return a JWT Token
+
+
 class LoginView(TokenObtainPairView):
-    # We can customize the response here later if we want to 
-    # return the user's privilege level along with the token.
     pass
 
 
 class RegisterPharmacyView(generics.CreateAPIView):
     serializer_class = RegisterPharmacySerializer
-    permission_classes = [AllowAny] # We must allow unauthenticated users to register
+    permission_classes = [AllowAny]
 
     def create(self, request, *args, **kwargs):
-        # 1. Pass the incoming JSON data to the Serializer
         serializer = self.get_serializer(data=request.data)
-        
-        # 2. Validate the data (checks phone number uniqueness, missing fields, etc.)
         serializer.is_valid(raise_exception=True)
-        
-        # 3. Trigger the `create()` method in the serializer (The Atomic Transaction)
         user = serializer.save()
 
-        # 4. Generate the JWT Tokens for the brand new user
         refresh = RefreshToken.for_user(user)
 
-        # 5. Send a beautiful, structured JSON response back to the frontend
         return Response({
             "message": "Pharmacy and Owner registered successfully!",
             "user": {
@@ -572,38 +640,20 @@ class RegisterPharmacyView(generics.CreateAPIView):
         }, status=status.HTTP_201_CREATED)
 
 
-
 class UserDetailView(generics.RetrieveAPIView):
-    """
-    Returns the details of the currently logged-in user.
-    """
     serializer_class = UserSerializer
-    permission_classes = [IsAuthenticated] # MUST have a valid JWT token in the header
+    permission_classes = [IsAuthenticated]
 
     def get_object(self):
-        # We override this method because normally Django looks for an ID in the URL (e.g., /me/5/).
-        # But we don't need an ID! The JWT Middleware already identified the user 
-        # and attached them to `self.request.user`. We just return that exact user.
         return self.request.user
 
 
-
 class UpdatePharmacyView(generics.RetrieveUpdateAPIView):
-    """
-    Allows an Owner to view and update their Pharmacy details (e.g., GSTIN).
-    A Level 1 Clerk will be completely blocked from accessing this API.
-    """
     serializer_class = PharmacySerializer
-    
-    # The Bouncer: Only Level 2, or 3 users belonging to the pharmacy are allowed in.
     permission_classes = [IsPharmacyOwnerOrSupport]
 
     def get_object(self):
-        # We don't look up the pharmacy by an ID in the URL. 
-        # We guarantee absolute security by only fetching the pharmacy attached to the logged-in user!
         return self.request.user.pharmacy
-
-
 
 
 class StaffCreateView(generics.ListCreateAPIView):
@@ -621,19 +671,22 @@ class StaffCreateView(generics.ListCreateAPIView):
 
 
 class LogoutView(generics.GenericAPIView):
-    """
-    Blacklists the given refresh token, effectively logging the user out.
-    """
     permission_classes = [IsAuthenticated]
-    
+
     def post(self, request):
         try:
             refresh_token = request.data["refresh"]
             token = RefreshToken(refresh_token)
             token.blacklist()
-            return Response({"message": "Successfully logged out."}, status=status.HTTP_205_RESET_CONTENT)
-        except Exception as e:
-            return Response({"error": "Invalid token or token not provided."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"message": "Successfully logged out."},
+                status=status.HTTP_205_RESET_CONTENT
+            )
+        except Exception:
+            return Response(
+                {"error": "Invalid token or token not provided."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 ================================================================================
 File: accounts/migrations/0001_initial.py
@@ -715,6 +768,46 @@ class Migration(migrations.Migration):
             model_name='pharmacy',
             name='settings',
             field=models.JSONField(blank=True, default=dict),
+        ),
+    ]
+
+
+================================================================================
+File: accounts/migrations/0003_organization_customuser_organization_and_more.py
+================================================================================
+
+# Generated by Django 6.0.3 on 2026-03-24 11:36
+
+import django.db.models.deletion
+import uuid
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ('accounts', '0002_pharmacy_settings'),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name='Organization',
+            fields=[
+                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('name', models.CharField(max_length=255)),
+                ('subscription_plan', models.CharField(default='Tier 2', max_length=50)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+            ],
+        ),
+        migrations.AddField(
+            model_name='customuser',
+            name='organization',
+            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='members', to='accounts.organization'),
+        ),
+        migrations.AddField(
+            model_name='pharmacy',
+            name='organization',
+            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='branches', to='accounts.organization'),
         ),
     ]
 
@@ -1946,6 +2039,121 @@ class PurchaseReturn(TenantModel):
 
     def __str__(self):
         return f"Return {self.medicine.name} ({self.return_quantity}) to {self.supplier.name}"
+    
+class SupplierReturnPolicy(TenantModel):
+    """
+    Each supplier has their own return acceptance window.
+    e.g. Sun Pharma accepts returns until 90 days before expiry.
+    Cipla accepts until 60 days before expiry.
+    """
+    supplier = models.OneToOneField(
+        Supplier,
+        on_delete=models.CASCADE,
+        related_name='return_policy'
+    )
+    # Supplier accepts returns until this many days before expiry
+    return_window_days = models.IntegerField(
+        default=90,
+        help_text="Days before expiry date by which returns must be initiated"
+    )
+    gst_credit_eligible = models.BooleanField(
+        default=True,
+        help_text="Does this supplier issue GST credit notes on returns?"
+    )
+    # How many days advance notice YOU need to arrange the physical return
+    advance_notice_days = models.IntegerField(
+        default=14,
+        help_text="Alert fires this many days before the return window closes"
+    )
+    notes = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.supplier.name} — return by {self.return_window_days}d before expiry"
+
+
+class ReturnAlert(TenantModel):
+    """
+    Auto-generated alert for each InventoryBatch approaching
+    its supplier's return deadline.
+
+    Generated nightly by a Celery task.
+    Status lifecycle: PENDING → RETURN | SELL | IGNORED
+    """
+    STATUS_CHOICES = [
+        ('PENDING',  'Pending Decision'),
+        ('RETURN',   'Marked for Return'),
+        ('SELL',     'Decision: Sell Before Expiry'),
+        ('IGNORED',  'Ignored'),
+    ]
+
+    RECOMMENDATION_CHOICES = [
+        ('SELL',    'Sell before expiry'),
+        ('RETURN',  'Return to supplier'),
+        ('PARTIAL', 'Sell some, return rest'),
+    ]
+
+    inventory_batch = models.ForeignKey(
+        InventoryBatch,
+        on_delete=models.CASCADE,
+        related_name='return_alerts'
+    )
+    supplier = models.ForeignKey(
+        Supplier,
+        on_delete=models.PROTECT,
+        related_name='return_alerts'
+    )
+
+    # The hard deadline — must return before this date or window closes
+    return_deadline = models.DateField(
+        help_text="Last date supplier accepts this return"
+    )
+    # Alert fires this many days before the deadline
+    alert_date = models.DateField(
+        help_text="Date this alert was surfaced to the owner"
+    )
+
+    # GST intelligence
+    gst_quarter_deadline = models.DateField(
+        null=True, blank=True,
+        help_text="GST filing deadline for the quarter this return falls in"
+    )
+    gst_credit_at_risk = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00'),
+        help_text="Estimated GST input credit lost if return is missed"
+    )
+    # True if return_deadline falls AFTER the GST filing deadline
+    # i.e. you must return BEFORE the quarter closes to claim input credit
+    gst_warning = models.BooleanField(default=False)
+
+    # Sell vs Return intelligence
+    estimated_sell_quantity = models.IntegerField(
+        default=0,
+        help_text="Predicted units sellable before expiry based on velocity"
+    )
+    recommendation = models.CharField(
+        max_length=10,
+        choices=RECOMMENDATION_CHOICES,
+        default='RETURN'
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='PENDING'
+    )
+    actioned_by = models.ForeignKey(
+        'accounts.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True, blank=True
+    )
+    actioned_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return (
+            f"Alert: {self.inventory_batch.medicine.name} "
+            f"— return by {self.return_deadline}"
+        )
 
 ================================================================================
 File: inventory/serializers.py
@@ -3353,6 +3561,69 @@ class Migration(migrations.Migration):
             name='mrp',
             field=models.DecimalField(decimal_places=2, default=0, max_digits=10),
             preserve_default=False,
+        ),
+    ]
+
+
+================================================================================
+File: inventory/migrations/0005_returnalert_supplierreturnpolicy.py
+================================================================================
+
+# Generated by Django 6.0.3 on 2026-03-24 11:38
+
+import django.db.models.deletion
+import uuid
+from decimal import Decimal
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ('accounts', '0003_organization_customuser_organization_and_more'),
+        ('inventory', '0004_purchasereturn_mrp'),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name='ReturnAlert',
+            fields=[
+                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('return_deadline', models.DateField(help_text='Last date supplier accepts this return')),
+                ('alert_date', models.DateField(help_text='Date this alert was surfaced to the owner')),
+                ('gst_quarter_deadline', models.DateField(blank=True, help_text='GST filing deadline for the quarter this return falls in', null=True)),
+                ('gst_credit_at_risk', models.DecimalField(decimal_places=2, default=Decimal('0.00'), help_text='Estimated GST input credit lost if return is missed', max_digits=10)),
+                ('gst_warning', models.BooleanField(default=False)),
+                ('estimated_sell_quantity', models.IntegerField(default=0, help_text='Predicted units sellable before expiry based on velocity')),
+                ('recommendation', models.CharField(choices=[('SELL', 'Sell before expiry'), ('RETURN', 'Return to supplier'), ('PARTIAL', 'Sell some, return rest')], default='RETURN', max_length=10)),
+                ('status', models.CharField(choices=[('PENDING', 'Pending Decision'), ('RETURN', 'Marked for Return'), ('SELL', 'Decision: Sell Before Expiry'), ('IGNORED', 'Ignored')], default='PENDING', max_length=20)),
+                ('actioned_at', models.DateTimeField(blank=True, null=True)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('actioned_by', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to=settings.AUTH_USER_MODEL)),
+                ('inventory_batch', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='return_alerts', to='inventory.inventorybatch')),
+                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
+                ('supplier', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='return_alerts', to='inventory.supplier')),
+            ],
+            options={
+                'abstract': False,
+            },
+        ),
+        migrations.CreateModel(
+            name='SupplierReturnPolicy',
+            fields=[
+                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('return_window_days', models.IntegerField(default=90, help_text='Days before expiry date by which returns must be initiated')),
+                ('gst_credit_eligible', models.BooleanField(default=True, help_text='Does this supplier issue GST credit notes on returns?')),
+                ('advance_notice_days', models.IntegerField(default=14, help_text='Alert fires this many days before the return window closes')),
+                ('notes', models.TextField(blank=True, null=True)),
+                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
+                ('supplier', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='return_policy', to='inventory.supplier')),
+            ],
+            options={
+                'abstract': False,
+            },
         ),
     ]
 

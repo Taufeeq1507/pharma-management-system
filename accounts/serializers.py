@@ -15,7 +15,8 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomUser
-        fields = ['id', 'phone_number', 'privilege_level', 'pharmacy']
+        # Bug 6 fix: include organization so Chain Owner features work
+        fields = ['id', 'phone_number', 'privilege_level', 'pharmacy', 'organization']
 
 
 class RegisterPharmacySerializer(serializers.Serializer):
@@ -35,7 +36,6 @@ class RegisterPharmacySerializer(serializers.Serializer):
             gstin = validated_data.get('gstin', '')
             drug_license_no = validated_data.get('drug_license_no', '')
 
-            # Create Organization first — every pharmacy belongs to one
             org = Organization.objects.create(
                 name=validated_data['pharmacy_name']
             )
@@ -52,7 +52,7 @@ class RegisterPharmacySerializer(serializers.Serializer):
                 password=validated_data['password'],
                 pharmacy=pharmacy,
                 organization=org,
-                privilege_level=2  # Standalone owner
+                privilege_level=2
             )
 
         return user
@@ -70,11 +70,21 @@ class StaffCreateSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         owner_pharmacy = request.user.pharmacy
 
+        if owner_pharmacy is None:
+            raise serializers.ValidationError(
+                "Your account is not linked to a pharmacy."
+            )
+
+        if owner_pharmacy.organization is None:
+            raise serializers.ValidationError(
+                "Your pharmacy is not linked to an organization. "
+                "Please contact support."
+            )
+
         privilege_level = validated_data.get('privilege_level', 1)
-        # Owners (level 2) can only create clerks (1) or co-owners (2)
-        if privilege_level > 2:
+        if privilege_level > 1:
             raise serializers.ValidationError({
-                "privilege_level": "You cannot create users with privilege level higher than 2."
+                "privilege_level": "You can only create Clerk accounts (level 1) from this endpoint."
             })
 
         user = CustomUser.objects.create_user(

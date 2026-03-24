@@ -76,8 +76,8 @@ class CheckoutSerializer(serializers.Serializer):
         ]
     }
 
-    validate() → FEFO resolution with select_for_update() lock — no DB writes
-    create()   → atomic deductions + bill + snapshot creation
+    validate() — input format checks only (no DB writes, no locks)
+    create()   — atomic FEFO resolution + lock + deductions + bill + snapshot
     """
     customer_phone = serializers.CharField(max_length=15,  required=False, allow_blank=True)
     customer_name  = serializers.CharField(max_length=255, required=False, allow_blank=True)
@@ -93,49 +93,61 @@ class CheckoutSerializer(serializers.Serializer):
             raise serializers.ValidationError("A sale must have at least one item.")
         return value
 
+    # Bug 2 fix: validate() does format checks only — NO DB queries, NO locks.
+    # FEFO resolution and select_for_update() live entirely inside create()'s
+    # @transaction.atomic block so that row locks are held for the full duration.
     def validate(self, data):
+        return data
+
+    @transaction.atomic
+    def create(self, validated_data):
         """
-        FEFO Resolution — runs entirely before any DB write.
+        FEFO Resolution + atomic deductions.
 
         For each (medicine, qty) pair:
-        1. Query InventoryBatch with select_for_update() — locks rows at DB level
-           so concurrent checkouts cannot both sell the last tablet
+        1. select_for_update() inside the open transaction — holds row locks
         2. Order by expiry_date ASC — First Expire First Out
         3. Walk batches greedily until requested qty is satisfied
-        4. If total available stock < requested qty → ValidationError with clear message
-        5. Build deduction_plan = [(batch_instance, qty_to_deduct), ...]
-        6. Stash on data['_deduction_plan'] for create()
+        4. Re-check available_quantity under the lock (prevents double-sell races)
+        5. If total available stock < requested qty → ValidationError rolls back all
         """
+        request        = self.context['request']
+        items          = validated_data.pop('items')
+        discount       = validated_data.get('discount', Decimal('0.00'))
+
+        # ── Step 1: FEFO resolution under lock ────────────────────────────────
         deduction_plan = []
         errors         = {}
 
-        for item in data['items']:
+        for item in items:
             medicine_id   = item['medicine']
             qty_needed    = item['quantity']
             qty_remaining = qty_needed
 
-            # select_for_update() locks these rows until the transaction completes
-            # Any other checkout trying to touch the same batches must wait
-            batches = (
-                InventoryBatch.objects.select_related('medicine').filter(
-                    medicine_id           = medicine_id,
+            # select_for_update inside @transaction.atomic — locks rows for real
+            batches = list(
+                InventoryBatch.objects
+                .select_for_update()
+                .select_related('medicine')
+                .filter(
+                    medicine_id            = medicine_id,
                     available_quantity__gt = 0,
-                    medicine__is_active   = True,
+                    medicine__is_active    = True,
                 )
                 .order_by('expiry_date')  # FEFO
             )
 
-            if not batches.exists():
+            if not batches:
                 errors[str(medicine_id)] = "No stock available for this medicine."
                 continue
 
-            batch_list = list(batches)
-            for batch in batch_list:
+            for batch in batches:
                 if qty_remaining <= 0:
                     break
                 deduct = min(batch.available_quantity, qty_remaining)
                 deduction_plan.append((batch, deduct))
                 qty_remaining -= deduct
+
             if qty_remaining > 0:
                 errors[str(medicine_id)] = (
                     f"Insufficient stock. Requested {qty_needed}, "
@@ -145,29 +157,12 @@ class CheckoutSerializer(serializers.Serializer):
         if errors:
             raise serializers.ValidationError(errors)
 
-        data['_deduction_plan'] = deduction_plan
-        return data
-
-    @transaction.atomic
-    def create(self, validated_data):
-        request        = self.context['request']
-        raw_plan       = validated_data.pop('_deduction_plan')
-        validated_data.pop('items')
-        discount       = validated_data.get('discount', Decimal('0.00'))
-        deduction_plan = []
-        for batch, qty in raw_plan:
-            locked_batch = (
-                InventoryBatch.objects
-                .select_for_update()
-                .get(pk=batch.pk)
-            )
-            deduction_plan.append((locked_batch, qty))
+        # ── Step 2: Execute deductions + build snapshot ───────────────────────
         sales_items_to_create = []
         items_snapshot        = []
         subtotal              = Decimal('0.00')
         total_tax             = Decimal('0.00')
 
-        # ── Step 1: Execute deductions + build snapshot ────────────────────
         for batch, qty in deduction_plan:
             pack_qty           = batch.medicine.pack_qty or 1
             mrp_per_strip      = batch.mrp
@@ -181,12 +176,11 @@ class CheckoutSerializer(serializers.Serializer):
             subtotal  += line_base
             total_tax += line_tax
 
-            # Deduct from shelf
+            # Deduct from shelf (batch is already locked via select_for_update)
             batch.available_quantity -= qty
             batch.save()
 
             # Fetch supplier info for the audit snapshot
-            # Most recent purchase of this exact batch = most accurate source
             purchase_item = (
                 PurchaseItem.objects
                 .filter(medicine=batch.medicine, batch_number=batch.batch_number, mrp=batch.mrp)
@@ -202,7 +196,6 @@ class CheckoutSerializer(serializers.Serializer):
                 supplier_gstin   = purchase_item.purchase_bill.supplier.gstin
                 supplier_invoice = purchase_item.purchase_bill.invoice_number
 
-            # Build the frozen snapshot dict for this line
             items_snapshot.append({
                 "medicine_id":        str(batch.medicine.id),
                 "medicine_name":      batch.medicine.name,
@@ -221,7 +214,6 @@ class CheckoutSerializer(serializers.Serializer):
                 "purchase_invoice":   supplier_invoice,
             })
 
-            # Collect SalesItem data — bulk created after bill is created
             sales_items_to_create.append({
                 'medicine':           batch.medicine,
                 'inventory_batch':    batch,
@@ -233,7 +225,7 @@ class CheckoutSerializer(serializers.Serializer):
                 'line_total':         line_total,
             })
 
-        # ── Step 2: Create the SalesBill ───────────────────────────────────
+        # ── Step 3: Create the SalesBill ──────────────────────────────────────
         bill = SalesBill.objects.create(
             billed_by      = request.user,
             subtotal       = subtotal.quantize(Decimal('0.01')),
@@ -246,7 +238,7 @@ class CheckoutSerializer(serializers.Serializer):
             payment_mode   = validated_data.get('payment_mode', 'CASH'),
         )
 
-        # ── Step 3: Bulk create all SalesItem rows ─────────────────────────
+        # ── Step 4: Bulk create all SalesItem rows ────────────────────────────
         pharmacy = get_current_pharmacy()
         SalesItem.objects.bulk_create([
             SalesItem(sales_bill=bill, pharmacy=pharmacy, **item_data)
@@ -312,8 +304,11 @@ class SalesReturnSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
-        # Restore stock to the exact batch it was sold from
-        self._batch.available_quantity += validated_data['return_quantity']
-        self._batch.save()
+        # Bug 3 fix: re-fetch the batch WITH a lock inside this atomic block
+        # so concurrent returns on the same sales_item cannot both restore stock
+        # from the same stale in-memory object.
+        batch = InventoryBatch.objects.select_for_update().get(pk=self._batch.pk)
+        batch.available_quantity += validated_data['return_quantity']
+        batch.save()
 
         return SalesReturn.objects.create(**validated_data)
