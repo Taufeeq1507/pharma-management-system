@@ -236,3 +236,118 @@ class PurchaseReturn(TenantModel):
 
     def __str__(self):
         return f"Return {self.medicine.name} ({self.return_quantity}) to {self.supplier.name}"
+    
+class SupplierReturnPolicy(TenantModel):
+    """
+    Each supplier has their own return acceptance window.
+    e.g. Sun Pharma accepts returns until 90 days before expiry.
+    Cipla accepts until 60 days before expiry.
+    """
+    supplier = models.OneToOneField(
+        Supplier,
+        on_delete=models.CASCADE,
+        related_name='return_policy'
+    )
+    # Supplier accepts returns until this many days before expiry
+    return_window_days = models.IntegerField(
+        default=90,
+        help_text="Days before expiry date by which returns must be initiated"
+    )
+    gst_credit_eligible = models.BooleanField(
+        default=True,
+        help_text="Does this supplier issue GST credit notes on returns?"
+    )
+    # How many days advance notice YOU need to arrange the physical return
+    advance_notice_days = models.IntegerField(
+        default=14,
+        help_text="Alert fires this many days before the return window closes"
+    )
+    notes = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.supplier.name} — return by {self.return_window_days}d before expiry"
+
+
+class ReturnAlert(TenantModel):
+    """
+    Auto-generated alert for each InventoryBatch approaching
+    its supplier's return deadline.
+
+    Generated nightly by a Celery task.
+    Status lifecycle: PENDING → RETURN | SELL | IGNORED
+    """
+    STATUS_CHOICES = [
+        ('PENDING',  'Pending Decision'),
+        ('RETURN',   'Marked for Return'),
+        ('SELL',     'Decision: Sell Before Expiry'),
+        ('IGNORED',  'Ignored'),
+    ]
+
+    RECOMMENDATION_CHOICES = [
+        ('SELL',    'Sell before expiry'),
+        ('RETURN',  'Return to supplier'),
+        ('PARTIAL', 'Sell some, return rest'),
+    ]
+
+    inventory_batch = models.ForeignKey(
+        InventoryBatch,
+        on_delete=models.CASCADE,
+        related_name='return_alerts'
+    )
+    supplier = models.ForeignKey(
+        Supplier,
+        on_delete=models.PROTECT,
+        related_name='return_alerts'
+    )
+
+    # The hard deadline — must return before this date or window closes
+    return_deadline = models.DateField(
+        help_text="Last date supplier accepts this return"
+    )
+    # Alert fires this many days before the deadline
+    alert_date = models.DateField(
+        help_text="Date this alert was surfaced to the owner"
+    )
+
+    # GST intelligence
+    gst_quarter_deadline = models.DateField(
+        null=True, blank=True,
+        help_text="GST filing deadline for the quarter this return falls in"
+    )
+    gst_credit_at_risk = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00'),
+        help_text="Estimated GST input credit lost if return is missed"
+    )
+    # True if return_deadline falls AFTER the GST filing deadline
+    # i.e. you must return BEFORE the quarter closes to claim input credit
+    gst_warning = models.BooleanField(default=False)
+
+    # Sell vs Return intelligence
+    estimated_sell_quantity = models.IntegerField(
+        default=0,
+        help_text="Predicted units sellable before expiry based on velocity"
+    )
+    recommendation = models.CharField(
+        max_length=10,
+        choices=RECOMMENDATION_CHOICES,
+        default='RETURN'
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='PENDING'
+    )
+    actioned_by = models.ForeignKey(
+        'accounts.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True, blank=True
+    )
+    actioned_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return (
+            f"Alert: {self.inventory_batch.medicine.name} "
+            f"— return by {self.return_deadline}"
+        )

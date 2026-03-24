@@ -4,55 +4,74 @@ from django.db import models
 from .utils import get_current_pharmacy
 
 
-
 class PharmacyManager(models.Manager):
     def get_queryset(self):
-        from .utils import get_current_pharmacy, is_current_user_superuser
-        
+        from .utils import get_current_pharmacy, get_current_organization, is_current_user_superuser
+
         if is_current_user_superuser():
             return super().get_queryset()
-            
+
         current_pharmacy = get_current_pharmacy()
         if current_pharmacy:
             return super().get_queryset().filter(pharmacy=current_pharmacy)
-        
+
+        current_org = get_current_organization()
+        if current_org:
+            return super().get_queryset().filter(pharmacy__organization=current_org)
+
         return super().get_queryset().none()
+
 
 class TenantModel(models.Model):
     """
     MASTER BLUEPRINT: Automatically filters reads AND automatically stamps writes.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    # 1. Removed editable=False so it shows up in forms/admin panels. 
-    # Normal users have this forced via save(), but Superadmins can now edit it directly.
     pharmacy = models.ForeignKey('accounts.Pharmacy', on_delete=models.CASCADE, related_name="%(class)s_set")
-    
+
     objects = PharmacyManager()
 
     class Meta:
         abstract = True
 
-    # 2. THE AUTOMATIC WRITER
     def save(self, *args, **kwargs):
-        # If this is a brand new object being created
         if self._state.adding:
             from .utils import get_current_pharmacy, is_current_user_superuser
             current_pharmacy = get_current_pharmacy()
-            
-            # 1. Check if the person is a superuser (e.g. Django Admin). 
-            # If so, and they MANUALLY picked a pharmacy from the dropdown, let them keep it!
+
             if is_current_user_superuser() and getattr(self, 'pharmacy_id', None) is not None:
-                pass # Don't overwrite the Superadmin's choice
+                pass
             else:
-                # 2. For everyone else (or if Superadmin left it blank), 
-                # strictly crush any submitted ID and force it to their own actual pharmacy.
                 if current_pharmacy:
                     self.pharmacy = current_pharmacy
-                
-        # Now proceed with the normal Django save process
+
         super().save(*args, **kwargs)
+
+
+class Organization(models.Model):
+    """
+    The parent entity for a chain of pharmacies.
+    A standalone pharmacy also gets an Organization — with just one branch.
+    This keeps the data model uniform.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255)
+    subscription_plan = models.CharField(max_length=50, default="Tier 2")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name
+
+
 class Pharmacy(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='branches'
+    )
     name = models.CharField(max_length=255)
     gstin = models.CharField(max_length=15, unique=True, null=True, blank=True)
     drug_license_no = models.CharField(max_length=100, unique=True, null=True, blank=True)
@@ -62,6 +81,7 @@ class Pharmacy(models.Model):
 
     def __str__(self):
         return self.name
+
 
 class CustomUserManager(BaseUserManager):
     def create_user(self, phone_number, password=None, **extra_fields):
@@ -75,16 +95,29 @@ class CustomUserManager(BaseUserManager):
     def create_superuser(self, phone_number, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
-        extra_fields.setdefault('privilege_level', 4) # 4 = Admin
+        extra_fields.setdefault('privilege_level', 5)  # 5 = SaaS Admin
         return self.create_user(phone_number, password, **extra_fields)
 
+
 class CustomUser(AbstractUser):
-    username = None 
-    
+    username = None
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     phone_number = models.CharField(max_length=15, unique=True)
     pharmacy = models.ForeignKey(Pharmacy, on_delete=models.CASCADE, null=True, blank=True)
-    privilege_level = models.IntegerField(default=1) # 1: Clerk, 2: Owner, 3: Support, 4: Admin
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='members'
+    )
+    privilege_level = models.IntegerField(default=1)
+    # 1: Clerk
+    # 2: Branch Owner / Standalone Owner
+    # 3: Support Staff
+    # 4: Chain Owner
+    # 5: SaaS Admin
 
     USERNAME_FIELD = 'phone_number'
     REQUIRED_FIELDS = []
