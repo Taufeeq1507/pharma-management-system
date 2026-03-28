@@ -1,207 +1,29 @@
-BACKEND DIRECTORY STRUCTURE:
-============================
-Pharma-Management-System
-├── .gitignore
-├── Procfile
-├── accounts
-│   ├── __init__.py
-│   ├── admin.py
-│   ├── apps.py
-│   ├── middleware.py
-│   ├── migrations
-│   │   ├── 0001_initial.py
-│   │   ├── 0002_pharmacy_settings.py
-│   │   ├── 0003_organization_customuser_organization_and_more.py
-│   │   └── __init__.py
-│   ├── models.py
-│   ├── permissions.py
-│   ├── serializers.py
-│   ├── tests.py
-│   ├── urls.py
-│   ├── utils.py
-│   └── views.py
-├── backend_core
-│   ├── __init__.py
-│   ├── asgi.py
-│   ├── settings.py
-│   ├── urls.py
-│   └── wsgi.py
-├── billing
-│   ├── __init__.py
-│   ├── admin.py
-│   ├── apps.py
-│   ├── migrations
-│   │   ├── 0001_initial.py
-│   │   └── __init__.py
-│   ├── models.py
-│   ├── serializers.py
-│   ├── tests.py
-│   ├── urls.py
-│   └── views.py
-├── docker-compose.yml
-├── inventory
-│   ├── __init__.py
-│   ├── admin.py
-│   ├── apps.py
-│   ├── migrations
-│   │   ├── 0001_initial.py
-│   │   ├── 0002_medicinemaster_default_gst_percentage_and_more.py
-│   │   ├── 0003_shelflocation_inventorybatch_shelf_stockadjustment_and_more.py
-│   │   ├── 0004_purchasereturn_mrp.py
-│   │   ├── 0005_returnalert_supplierreturnpolicy.py
-│   │   └── __init__.py
-│   ├── models.py
-│   ├── serializers.py
-│   ├── tests.py
-│   ├── urls.py
-│   └── views.py
-├── manage.py
-├── requirements.txt
-└── runtime.txt
+PROJECT CODEBASE DUMP
+==================================================
 
-BACKEND SOURCE CODE:
-====================
+--- FILE: accounts/__init__.py ---
 
 
-================================================================================
-File: .gitignore
-================================================================================
-
-# .gitignore
-.env
-__pycache__/
-*.pyc
-*.pyo
-db.sqlite3
-.DS_Store
-venv/
-env/
-*.egg-info/
-dist/
-build/
-full_codebase.md
-full_codebase.txt
-Frontend/
-
-================================================================================
-File: Procfile
-================================================================================
-
-web: gunicorn backend_core.wsgi --log-file -
-
-================================================================================
-File: docker-compose.yml
-================================================================================
-
-services:
-  db:
-    image: postgres:15
-    container_name: pharmacy_postgres
-    restart: always
-    environment:
-      POSTGRES_DB: pharmacy_db
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: securepassword
-    ports:
-      - "5432:5432"
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-
-volumes:
-  pg_data:
-
-================================================================================
-File: manage.py
-================================================================================
-
-#!/usr/bin/env python
-"""Django's command-line utility for administrative tasks."""
-import os
-import sys
-
-
-def main():
-    """Run administrative tasks."""
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend_core.settings')
-    try:
-        from django.core.management import execute_from_command_line
-    except ImportError as exc:
-        raise ImportError(
-            "Couldn't import Django. Are you sure it's installed and "
-            "available on your PYTHONPATH environment variable? Did you "
-            "forget to activate a virtual environment?"
-        ) from exc
-    execute_from_command_line(sys.argv)
-
-
-if __name__ == '__main__':
-    main()
-
-
-================================================================================
-File: requirements.txt
-================================================================================
-
-asgiref==3.11.1
-attrs==26.1.0
-dj-database-url==3.1.2
-Django==6.0.3
-django-cors-headers==4.9.0
-djangorestframework==3.16.1
-djangorestframework_simplejwt==5.5.1
-drf-spectacular==0.29.0
-gunicorn==25.1.0
-inflection==0.5.1
-jsonschema==4.26.0
-jsonschema-specifications==2025.9.1
-packaging==26.0
-psycopg2-binary==2.9.11
-PyJWT==2.11.0
-python-decouple==3.8
-PyYAML==6.0.3
-referencing==0.37.0
-rpds-py==0.30.0
-sqlparse==0.5.5
-typing_extensions==4.15.0
-uritemplate==4.2.0
-whitenoise==6.12.0
-
-
-================================================================================
-File: runtime.txt
-================================================================================
-
-python-3.12.9
-
-================================================================================
-File: accounts/__init__.py
-================================================================================
-
-
-
-================================================================================
-File: accounts/admin.py
-================================================================================
-
+--- FILE: accounts/admin.py ---
 from django.contrib import admin
-from .models import CustomUser, Pharmacy
+from .models import CustomUser, Pharmacy, Organization
 
-# Customizing the Pharmacy view in Admin
+
 class PharmacyAdmin(admin.ModelAdmin):
-    list_display = ('name', 'gstin', 'subscription_plan', 'created_at')
-    search_fields = ('name', 'gstin',)
+    list_display = ('name', 'gstin', 'subscription_plan', 'organization', 'created_at')
+    search_fields = ('name', 'gstin')
+
+
+class OrganizationAdmin(admin.ModelAdmin):
+    list_display = ('name', 'subscription_plan', 'created_at')
+    search_fields = ('name',)
+
 
 admin.site.register(CustomUser)
 admin.site.register(Pharmacy, PharmacyAdmin)
+admin.site.register(Organization, OrganizationAdmin)
 
-
-
-
-
-================================================================================
-File: accounts/apps.py
-================================================================================
-
+--- FILE: accounts/apps.py ---
 from django.apps import AppConfig
 
 
@@ -209,10 +31,7 @@ class AccountsConfig(AppConfig):
     name = 'accounts'
 
 
-================================================================================
-File: accounts/middleware.py
-================================================================================
-
+--- FILE: accounts/middleware.py ---
 from django.utils.deprecation import MiddlewareMixin
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from .utils import set_current_user_context
@@ -244,10 +63,7 @@ class PharmacyMiddleware(MiddlewareMixin):
         except Exception:
             pass
 
-================================================================================
-File: accounts/models.py
-================================================================================
-
+--- FILE: accounts/models.py ---
 import uuid
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
@@ -273,9 +89,6 @@ class PharmacyManager(models.Manager):
 
 
 class TenantModel(models.Model):
-    """
-    MASTER BLUEPRINT: Automatically filters reads AND automatically stamps writes.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     pharmacy = models.ForeignKey('accounts.Pharmacy', on_delete=models.CASCADE, related_name="%(class)s_set")
 
@@ -294,16 +107,16 @@ class TenantModel(models.Model):
             else:
                 if current_pharmacy:
                     self.pharmacy = current_pharmacy
+                elif getattr(self, 'pharmacy_id', None) is None:
+                    raise ValueError(
+                        f"Cannot save {self.__class__.__name__}: no pharmacy in context. "
+                        "Chain owners must select a branch before creating records."
+                    )
 
         super().save(*args, **kwargs)
 
 
 class Organization(models.Model):
-    """
-    The parent entity for a chain of pharmacies.
-    A standalone pharmacy also gets an Organization — with just one branch.
-    This keeps the data model uniform.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
     subscription_plan = models.CharField(max_length=50, default="Tier 2")
@@ -324,6 +137,7 @@ class Pharmacy(models.Model):
     )
     name = models.CharField(max_length=255)
     gstin = models.CharField(max_length=15, unique=True, null=True, blank=True)
+    state = models.CharField(max_length=100, default="Maharashtra", help_text="Used for CGST/SGST vs IGST calculation")
     drug_license_no = models.CharField(max_length=100, unique=True, null=True, blank=True)
     subscription_plan = models.CharField(max_length=50, default="Tier 2")
     settings = models.JSONField(default=dict, blank=True)
@@ -334,10 +148,10 @@ class Pharmacy(models.Model):
 
 
 class CustomUserManager(BaseUserManager):
-    def create_user(self, phone_number, password=None, **extra_fields):
+    def create_user(self, phone_number, name='', password=None, **extra_fields):
         if not phone_number:
             raise ValueError('The Phone Number must be set')
-        user = self.model(phone_number=phone_number, **extra_fields)
+        user = self.model(phone_number=phone_number, name=name, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
         return user
@@ -345,14 +159,15 @@ class CustomUserManager(BaseUserManager):
     def create_superuser(self, phone_number, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
-        extra_fields.setdefault('privilege_level', 5)  # 5 = SaaS Admin
-        return self.create_user(phone_number, password, **extra_fields)
+        extra_fields.setdefault('privilege_level', 5)
+        return self.create_user(phone_number, name="Superuser", password=password, **extra_fields)
 
 
 class CustomUser(AbstractUser):
     username = None
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255, blank=True)
     phone_number = models.CharField(max_length=15, unique=True)
     pharmacy = models.ForeignKey(Pharmacy, on_delete=models.CASCADE, null=True, blank=True)
     organization = models.ForeignKey(
@@ -377,11 +192,9 @@ class CustomUser(AbstractUser):
     def __str__(self):
         return f"{self.phone_number} (Level {self.privilege_level})"
 
-================================================================================
-File: accounts/permissions.py
-================================================================================
-
+--- FILE: accounts/permissions.py ---
 from rest_framework import permissions
+from django.core.exceptions import ObjectDoesNotExist
 
 
 class IsClerkOrHigher(permissions.BasePermission):
@@ -441,17 +254,15 @@ class IsPharmacyOwnerOrSupport(permissions.BasePermission):
     """
     def has_permission(self, request, view):
         user = request.user
-        return bool(
-            user and
-            user.is_authenticated and
-            user.privilege_level in [2, 3] and
-            getattr(user, 'pharmacy', None) is not None
-        )
+        if not (user and user.is_authenticated and user.privilege_level in [2, 3]):
+            return False
+        # Bug 9 fix: guard against a deleted pharmacy (FK set but row gone)
+        try:
+            return user.pharmacy is not None
+        except ObjectDoesNotExist:
+            return False
 
-================================================================================
-File: accounts/serializers.py
-================================================================================
-
+--- FILE: accounts/serializers.py ---
 from rest_framework import serializers
 from django.db import transaction
 from .models import CustomUser, Pharmacy, Organization
@@ -469,15 +280,18 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomUser
-        fields = ['id', 'phone_number', 'privilege_level', 'pharmacy']
+        # Bug 6 fix: include organization so Chain Owner features work
+        fields = ['id', 'name', 'phone_number', 'privilege_level', 'pharmacy', 'organization']
 
 
 class RegisterPharmacySerializer(serializers.Serializer):
     pharmacy_name = serializers.CharField(max_length=255)
+    owner_name = serializers.CharField(max_length=255)
     gstin = serializers.CharField(max_length=15, required=False, allow_blank=True)
     drug_license_no = serializers.CharField(max_length=100, required=False, allow_blank=True)
     phone_number = serializers.CharField(max_length=15)
     password = serializers.CharField(write_only=True)
+    is_chain = serializers.BooleanField(default=False)
 
     def validate_phone_number(self, value):
         if CustomUser.objects.filter(phone_number=value).exists():
@@ -489,7 +303,6 @@ class RegisterPharmacySerializer(serializers.Serializer):
             gstin = validated_data.get('gstin', '')
             drug_license_no = validated_data.get('drug_license_no', '')
 
-            # Create Organization first — every pharmacy belongs to one
             org = Organization.objects.create(
                 name=validated_data['pharmacy_name']
             )
@@ -501,12 +314,15 @@ class RegisterPharmacySerializer(serializers.Serializer):
                 organization=org
             )
 
+            privilege_level = 4 if validated_data.get('is_chain', False) else 2
+
             user = CustomUser.objects.create_user(
                 phone_number=validated_data['phone_number'],
+                name=validated_data['owner_name'],
                 password=validated_data['password'],
                 pharmacy=pharmacy,
                 organization=org,
-                privilege_level=2  # Standalone owner
+                privilege_level=privilege_level
             )
 
         return user
@@ -517,22 +333,33 @@ class StaffCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomUser
-        fields = ['id', 'phone_number', 'password', 'privilege_level']
+        fields = ['id', 'name', 'phone_number', 'password', 'privilege_level']
         read_only_fields = ['id']
 
     def create(self, validated_data):
         request = self.context.get('request')
         owner_pharmacy = request.user.pharmacy
 
+        if owner_pharmacy is None:
+            raise serializers.ValidationError(
+                "Your account is not linked to a pharmacy."
+            )
+
+        if owner_pharmacy.organization is None:
+            raise serializers.ValidationError(
+                "Your pharmacy is not linked to an organization. "
+                "Please contact support."
+            )
+
         privilege_level = validated_data.get('privilege_level', 1)
-        # Owners (level 2) can only create clerks (1) or co-owners (2)
-        if privilege_level > 2:
+        if privilege_level > 1:
             raise serializers.ValidationError({
-                "privilege_level": "You cannot create users with privilege level higher than 2."
+                "privilege_level": "You can only create Clerk accounts (level 1) from this endpoint."
             })
 
         user = CustomUser.objects.create_user(
             phone_number=validated_data['phone_number'],
+            name=validated_data.get('name', ''),
             password=validated_data['password'],
             pharmacy=owner_pharmacy,
             organization=owner_pharmacy.organization,
@@ -540,19 +367,13 @@ class StaffCreateSerializer(serializers.ModelSerializer):
         )
         return user
 
-================================================================================
-File: accounts/tests.py
-================================================================================
-
+--- FILE: accounts/tests.py ---
 from django.test import TestCase
 
 # Create your tests here.
 
 
-================================================================================
-File: accounts/urls.py
-================================================================================
-
+--- FILE: accounts/urls.py ---
 from django.urls import path
 from .views import LoginView, RegisterPharmacyView, UserDetailView, UpdatePharmacyView, StaffCreateView, LogoutView
 from rest_framework_simplejwt.views import TokenRefreshView
@@ -567,10 +388,7 @@ urlpatterns = [
     path('staff/', StaffCreateView.as_view(), name='staff_create'),
 ]
 
-================================================================================
-File: accounts/utils.py
-================================================================================
-
+--- FILE: accounts/utils.py ---
 import threading
 
 _thread_locals = threading.local()
@@ -593,16 +411,14 @@ def get_current_organization():
 def is_current_user_superuser():
     return getattr(_thread_locals, 'is_superuser', False)
 
-================================================================================
-File: accounts/views.py
-================================================================================
-
+--- FILE: accounts/views.py ---
 from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.response import Response
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.exceptions import NotFound
 from .serializers import (
     RegisterPharmacySerializer, UserSerializer,
     PharmacySerializer, StaffCreateSerializer
@@ -630,7 +446,8 @@ class RegisterPharmacyView(generics.CreateAPIView):
             "user": {
                 "id": str(user.id),
                 "phone_number": user.phone_number,
-                "pharmacy_name": user.pharmacy.name,
+                # Bug 1 fix: guard against pharmacy being None
+                "pharmacy_name": user.pharmacy.name if user.pharmacy else None,
                 "privilege_level": user.privilege_level
             },
             "tokens": {
@@ -653,7 +470,11 @@ class UpdatePharmacyView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsPharmacyOwnerOrSupport]
 
     def get_object(self):
-        return self.request.user.pharmacy
+        # Bug 5 fix: guard against Chain Owner / users with no pharmacy FK
+        pharmacy = self.request.user.pharmacy
+        if pharmacy is None:
+            raise NotFound("No pharmacy is linked to your account.")
+        return pharmacy
 
 
 class StaffCreateView(generics.ListCreateAPIView):
@@ -665,8 +486,12 @@ class StaffCreateView(generics.ListCreateAPIView):
         return UserSerializer
 
     def get_queryset(self):
-        return get_user_model().objects.filter(
-            pharmacy=self.request.user.pharmacy
+        User = get_user_model()
+        pharmacy = self.request.user.pharmacy
+        if pharmacy is None:
+            return User.objects.none()
+        return User.objects.filter(
+            pharmacy=pharmacy
         ).order_by('privilege_level', 'phone_number')
 
 
@@ -688,146 +513,10 @@ class LogoutView(generics.GenericAPIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-================================================================================
-File: accounts/migrations/0001_initial.py
-================================================================================
-
-# Generated by Django 6.0.3 on 2026-03-11 17:27
-
-import django.db.models.deletion
-import django.utils.timezone
-import uuid
-from django.db import migrations, models
+--- FILE: backend_core/__init__.py ---
 
 
-class Migration(migrations.Migration):
-
-    initial = True
-
-    dependencies = [
-        ('auth', '0012_alter_user_first_name_max_length'),
-    ]
-
-    operations = [
-        migrations.CreateModel(
-            name='Pharmacy',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('name', models.CharField(max_length=255)),
-                ('gstin', models.CharField(blank=True, max_length=15, null=True, unique=True)),
-                ('drug_license_no', models.CharField(blank=True, max_length=100, null=True, unique=True)),
-                ('subscription_plan', models.CharField(default='Tier 2', max_length=50)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-            ],
-        ),
-        migrations.CreateModel(
-            name='CustomUser',
-            fields=[
-                ('password', models.CharField(max_length=128, verbose_name='password')),
-                ('last_login', models.DateTimeField(blank=True, null=True, verbose_name='last login')),
-                ('is_superuser', models.BooleanField(default=False, help_text='Designates that this user has all permissions without explicitly assigning them.', verbose_name='superuser status')),
-                ('first_name', models.CharField(blank=True, max_length=150, verbose_name='first name')),
-                ('last_name', models.CharField(blank=True, max_length=150, verbose_name='last name')),
-                ('email', models.EmailField(blank=True, max_length=254, verbose_name='email address')),
-                ('is_staff', models.BooleanField(default=False, help_text='Designates whether the user can log into this admin site.', verbose_name='staff status')),
-                ('is_active', models.BooleanField(default=True, help_text='Designates whether this user should be treated as active. Unselect this instead of deleting accounts.', verbose_name='active')),
-                ('date_joined', models.DateTimeField(default=django.utils.timezone.now, verbose_name='date joined')),
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('phone_number', models.CharField(max_length=15, unique=True)),
-                ('privilege_level', models.IntegerField(default=1)),
-                ('groups', models.ManyToManyField(blank=True, help_text='The groups this user belongs to. A user will get all permissions granted to each of their groups.', related_name='user_set', related_query_name='user', to='auth.group', verbose_name='groups')),
-                ('user_permissions', models.ManyToManyField(blank=True, help_text='Specific permissions for this user.', related_name='user_set', related_query_name='user', to='auth.permission', verbose_name='user permissions')),
-                ('pharmacy', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, to='accounts.pharmacy')),
-            ],
-            options={
-                'verbose_name': 'user',
-                'verbose_name_plural': 'users',
-                'abstract': False,
-            },
-        ),
-    ]
-
-
-================================================================================
-File: accounts/migrations/0002_pharmacy_settings.py
-================================================================================
-
-# Generated by Django 6.0.3 on 2026-03-12 20:39
-
-from django.db import migrations, models
-
-
-class Migration(migrations.Migration):
-
-    dependencies = [
-        ('accounts', '0001_initial'),
-    ]
-
-    operations = [
-        migrations.AddField(
-            model_name='pharmacy',
-            name='settings',
-            field=models.JSONField(blank=True, default=dict),
-        ),
-    ]
-
-
-================================================================================
-File: accounts/migrations/0003_organization_customuser_organization_and_more.py
-================================================================================
-
-# Generated by Django 6.0.3 on 2026-03-24 11:36
-
-import django.db.models.deletion
-import uuid
-from django.db import migrations, models
-
-
-class Migration(migrations.Migration):
-
-    dependencies = [
-        ('accounts', '0002_pharmacy_settings'),
-    ]
-
-    operations = [
-        migrations.CreateModel(
-            name='Organization',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('name', models.CharField(max_length=255)),
-                ('subscription_plan', models.CharField(default='Tier 2', max_length=50)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-            ],
-        ),
-        migrations.AddField(
-            model_name='customuser',
-            name='organization',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='members', to='accounts.organization'),
-        ),
-        migrations.AddField(
-            model_name='pharmacy',
-            name='organization',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='branches', to='accounts.organization'),
-        ),
-    ]
-
-
-================================================================================
-File: accounts/migrations/__init__.py
-================================================================================
-
-
-
-================================================================================
-File: backend_core/__init__.py
-================================================================================
-
-
-
-================================================================================
-File: backend_core/asgi.py
-================================================================================
-
+--- FILE: backend_core/asgi.py ---
 """
 ASGI config for backend_core project.
 
@@ -846,10 +535,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend_core.settings')
 application = get_asgi_application()
 
 
-================================================================================
-File: backend_core/settings.py
-================================================================================
-
+--- FILE: backend_core/settings.py ---
 """
 Django settings for backend_core project.
 
@@ -1026,10 +712,28 @@ SPECTACULAR_SETTINGS = {
     'VERSION': '1.0.0',
 }
 
-================================================================================
-File: backend_core/urls.py
-================================================================================
+# ── JWT Settings ──────────────────────────────────────────────────────────────
+from datetime import timedelta
 
+SIMPLE_JWT = {
+    # Access token expires quickly — short window limits abuse if stolen
+    'ACCESS_TOKEN_LIFETIME':  timedelta(minutes=60),
+    # Refresh token is long-lived but auto-rotated on each use
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    # Each refresh issues a NEW token and blacklists the old one
+    'ROTATE_REFRESH_TOKENS':  True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    # Algorithm: HS256 is fine for a single-server deployment
+    'ALGORITHM': 'HS256',
+    'AUTH_HEADER_TYPES': ('Bearer',),
+}
+
+# ── CORS ──────────────────────────────────────────────────────────────────────
+# Use CORS_ALLOW_ALL_ORIGINS=True ONLY in local dev.
+# In production set this to False and whitelist specific frontend origins.
+CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='http://localhost:5173').split(',')
+
+--- FILE: backend_core/urls.py ---
 from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
@@ -1046,10 +750,7 @@ urlpatterns = [
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
 ]
 
-================================================================================
-File: backend_core/wsgi.py
-================================================================================
-
+--- FILE: backend_core/wsgi.py ---
 """
 WSGI config for backend_core project.
 
@@ -1068,16 +769,10 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend_core.settings')
 application = get_wsgi_application()
 
 
-================================================================================
-File: billing/__init__.py
-================================================================================
+--- FILE: billing/__init__.py ---
 
 
-
-================================================================================
-File: billing/admin.py
-================================================================================
-
+--- FILE: billing/admin.py ---
 from django.contrib import admin
 from .models import SalesBill, SalesItem, SalesReturn
 
@@ -1085,10 +780,7 @@ admin.site.register(SalesBill)
 admin.site.register(SalesItem)
 admin.site.register(SalesReturn)
 
-================================================================================
-File: billing/apps.py
-================================================================================
-
+--- FILE: billing/apps.py ---
 from django.apps import AppConfig
 
 
@@ -1096,10 +788,7 @@ class BillingConfig(AppConfig):
     name = 'billing'
 
 
-================================================================================
-File: billing/models.py
-================================================================================
-
+--- FILE: billing/models.py ---
 import uuid
 from django.db import models
 from django.utils import timezone
@@ -1118,6 +807,8 @@ class SalesBill(TenantModel):
     """
     customer_phone = models.CharField(max_length=15, blank=True, null=True, db_index=True)
     customer_name  = models.CharField(max_length=255, blank=True, null=True)
+    is_b2b         = models.BooleanField(default=False, help_text="True if selling to another registered business")
+    customer_gstin = models.CharField(max_length=15, blank=True, null=True)
 
     bill_date = models.DateTimeField(default=timezone.now)
     billed_by = models.ForeignKey(
@@ -1127,6 +818,9 @@ class SalesBill(TenantModel):
     # Financials — server-calculated only, never accepted from client
     subtotal    = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     total_tax   = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_cgst  = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_sgst  = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_igst  = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     discount    = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     grand_total = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
 
@@ -1167,7 +861,15 @@ class SalesItem(TenantModel):
     # Prices frozen at time of sale — independent of future InventoryBatch changes
     mrp_per_strip      = models.DecimalField(max_digits=10, decimal_places=2)
     sale_rate_per_unit = models.DecimalField(max_digits=10, decimal_places=4)  # per tablet
+    discount_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    
+    # Taxation breakdown
+    taxable_value      = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     gst_percentage     = models.DecimalField(max_digits=5,  decimal_places=2)
+    cgst_amount        = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    sgst_amount        = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    igst_amount        = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+
     line_total         = models.DecimalField(max_digits=10, decimal_places=2)
 
     def __str__(self):
@@ -1196,10 +898,7 @@ class SalesReturn(TenantModel):
     def __str__(self):
         return f"Return ×{self.return_quantity} of {self.sales_item.medicine.name}"
 
-================================================================================
-File: billing/serializers.py
-================================================================================
-
+--- FILE: billing/serializers.py ---
 from rest_framework import serializers
 from django.db import transaction
 from decimal import Decimal
@@ -1261,6 +960,9 @@ class CheckoutItemInputSerializer(serializers.Serializer):
     """One medicine line in the POS payload — quantity is in individual tablets."""
     medicine = serializers.UUIDField()
     quantity = serializers.IntegerField(min_value=1)
+    discount_percentage = serializers.DecimalField(
+        max_digits=5, decimal_places=2, required=False, default=Decimal('0.00')
+    )
 
 
 class CheckoutSerializer(serializers.Serializer):
@@ -1278,11 +980,13 @@ class CheckoutSerializer(serializers.Serializer):
         ]
     }
 
-    validate() → FEFO resolution with select_for_update() lock — no DB writes
-    create()   → atomic deductions + bill + snapshot creation
+    validate() — input format checks only (no DB writes, no locks)
+    create()   — atomic FEFO resolution + lock + deductions + bill + snapshot
     """
     customer_phone = serializers.CharField(max_length=15,  required=False, allow_blank=True)
     customer_name  = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    is_b2b         = serializers.BooleanField(default=False)
+    customer_gstin = serializers.CharField(max_length=15,  required=False, allow_blank=True)
     discount       = serializers.DecimalField(
                          max_digits=10, decimal_places=2,
                          required=False, default=Decimal('0.00'))
@@ -1295,49 +999,62 @@ class CheckoutSerializer(serializers.Serializer):
             raise serializers.ValidationError("A sale must have at least one item.")
         return value
 
+    # Bug 2 fix: validate() does format checks only — NO DB queries, NO locks.
+    # FEFO resolution and select_for_update() live entirely inside create()'s
+    # @transaction.atomic block so that row locks are held for the full duration.
     def validate(self, data):
+        return data
+
+    @transaction.atomic
+    def create(self, validated_data):
         """
-        FEFO Resolution — runs entirely before any DB write.
+        FEFO Resolution + atomic deductions.
 
         For each (medicine, qty) pair:
-        1. Query InventoryBatch with select_for_update() — locks rows at DB level
-           so concurrent checkouts cannot both sell the last tablet
+        1. select_for_update() inside the open transaction — holds row locks
         2. Order by expiry_date ASC — First Expire First Out
         3. Walk batches greedily until requested qty is satisfied
-        4. If total available stock < requested qty → ValidationError with clear message
-        5. Build deduction_plan = [(batch_instance, qty_to_deduct), ...]
-        6. Stash on data['_deduction_plan'] for create()
+        4. Re-check available_quantity under the lock (prevents double-sell races)
+        5. If total available stock < requested qty → ValidationError rolls back all
         """
+        request        = self.context['request']
+        items          = validated_data.pop('items')
+        discount       = validated_data.get('discount', Decimal('0.00'))
+
+        # ── Step 1: FEFO resolution under lock ────────────────────────────────
         deduction_plan = []
         errors         = {}
 
-        for item in data['items']:
+        for item in items:
             medicine_id   = item['medicine']
             qty_needed    = item['quantity']
+            discount_pct  = item.get('discount_percentage', Decimal('0.00'))
             qty_remaining = qty_needed
 
-            # select_for_update() locks these rows until the transaction completes
-            # Any other checkout trying to touch the same batches must wait
-            batches = (
-                InventoryBatch.objects.select_related('medicine').filter(
-                    medicine_id           = medicine_id,
+            # select_for_update inside @transaction.atomic — locks rows for real
+            batches = list(
+                InventoryBatch.objects
+                .select_for_update()
+                .select_related('medicine')
+                .filter(
+                    medicine_id            = medicine_id,
                     available_quantity__gt = 0,
-                    medicine__is_active   = True,
+                    medicine__is_active    = True,
                 )
                 .order_by('expiry_date')  # FEFO
             )
 
-            if not batches.exists():
+            if not batches:
                 errors[str(medicine_id)] = "No stock available for this medicine."
                 continue
 
-            batch_list = list(batches)
-            for batch in batch_list:
+            for batch in batches:
                 if qty_remaining <= 0:
                     break
                 deduct = min(batch.available_quantity, qty_remaining)
-                deduction_plan.append((batch, deduct))
+                deduction_plan.append((batch, deduct, discount_pct))
                 qty_remaining -= deduct
+
             if qty_remaining > 0:
                 errors[str(medicine_id)] = (
                     f"Insufficient stock. Requested {qty_needed}, "
@@ -1347,48 +1064,59 @@ class CheckoutSerializer(serializers.Serializer):
         if errors:
             raise serializers.ValidationError(errors)
 
-        data['_deduction_plan'] = deduction_plan
-        return data
-
-    @transaction.atomic
-    def create(self, validated_data):
-        request        = self.context['request']
-        raw_plan       = validated_data.pop('_deduction_plan')
-        validated_data.pop('items')
-        discount       = validated_data.get('discount', Decimal('0.00'))
-        deduction_plan = []
-        for batch, qty in raw_plan:
-            locked_batch = (
-                InventoryBatch.objects
-                .select_for_update()
-                .get(pk=batch.pk)
-            )
-            deduction_plan.append((locked_batch, qty))
+        # ── Step 2: Execute deductions + build snapshot ───────────────────────
         sales_items_to_create = []
         items_snapshot        = []
         subtotal              = Decimal('0.00')
         total_tax             = Decimal('0.00')
+        total_cgst            = Decimal('0.00')
+        total_sgst            = Decimal('0.00')
+        total_igst            = Decimal('0.00')
 
-        # ── Step 1: Execute deductions + build snapshot ────────────────────
-        for batch, qty in deduction_plan:
+        pharmacy = get_current_pharmacy()
+        is_b2b = validated_data.get('is_b2b', False)
+        customer_gstin = validated_data.get('customer_gstin', '')
+
+        # Auto-detect Inter-state vs Intra-state logic using GSTIN State Codes
+        is_inter_state = False
+        if is_b2b and customer_gstin and pharmacy.gstin:
+            if len(customer_gstin) >= 2 and len(pharmacy.gstin) >= 2:
+                is_inter_state = customer_gstin[:2] != pharmacy.gstin[:2]
+
+        for batch, qty, discount_pct in deduction_plan:
             pack_qty           = batch.medicine.pack_qty or 1
             mrp_per_strip      = batch.mrp
             sale_rate_per_unit = (mrp_per_strip / Decimal(pack_qty)).quantize(Decimal('0.0001'))
             gst_pct            = batch.gst_percentage
 
-            line_base  = (sale_rate_per_unit * qty).quantize(Decimal('0.01'))
+            line_gross = (sale_rate_per_unit * qty).quantize(Decimal('0.01'))
+            line_discount = (line_gross * discount_pct / Decimal('100')).quantize(Decimal('0.01'))
+            line_base  = line_gross - line_discount
+            
             line_tax   = (line_base * gst_pct / Decimal('100')).quantize(Decimal('0.01'))
             line_total = line_base + line_tax
 
+            cgst_amt = Decimal('0.00')
+            sgst_amt = Decimal('0.00')
+            igst_amt = Decimal('0.00')
+
+            if is_inter_state:
+                igst_amt = line_tax
+            else:
+                cgst_amt = line_tax / Decimal('2')
+                sgst_amt = line_tax / Decimal('2')
+
             subtotal  += line_base
             total_tax += line_tax
+            total_cgst += cgst_amt
+            total_sgst += sgst_amt
+            total_igst += igst_amt
 
-            # Deduct from shelf
+            # Deduct from shelf (batch is already locked via select_for_update)
             batch.available_quantity -= qty
             batch.save()
 
             # Fetch supplier info for the audit snapshot
-            # Most recent purchase of this exact batch = most accurate source
             purchase_item = (
                 PurchaseItem.objects
                 .filter(medicine=batch.medicine, batch_number=batch.batch_number, mrp=batch.mrp)
@@ -1404,7 +1132,6 @@ class CheckoutSerializer(serializers.Serializer):
                 supplier_gstin   = purchase_item.purchase_bill.supplier.gstin
                 supplier_invoice = purchase_item.purchase_bill.invoice_number
 
-            # Build the frozen snapshot dict for this line
             items_snapshot.append({
                 "medicine_id":        str(batch.medicine.id),
                 "medicine_name":      batch.medicine.name,
@@ -1416,14 +1143,18 @@ class CheckoutSerializer(serializers.Serializer):
                 "pack_qty":           pack_qty,
                 "mrp_per_strip":      str(mrp_per_strip),
                 "sale_rate_per_unit": str(sale_rate_per_unit),
+                "discount_percentage":str(discount_pct),
+                "taxable_value":      str(line_base),
                 "gst_percentage":     str(gst_pct),
+                "cgst_amount":        str(cgst_amt),
+                "sgst_amount":        str(sgst_amt),
+                "igst_amount":        str(igst_amt),
                 "line_total":         str(line_total),
                 "supplier_name":      supplier_name,
                 "supplier_gstin":     supplier_gstin,
                 "purchase_invoice":   supplier_invoice,
             })
 
-            # Collect SalesItem data — bulk created after bill is created
             sales_items_to_create.append({
                 'medicine':           batch.medicine,
                 'inventory_batch':    batch,
@@ -1431,24 +1162,34 @@ class CheckoutSerializer(serializers.Serializer):
                 'quantity':           qty,
                 'mrp_per_strip':      mrp_per_strip,
                 'sale_rate_per_unit': sale_rate_per_unit,
+                'discount_percentage':discount_pct,
+                'taxable_value':      line_base,
                 'gst_percentage':     gst_pct,
+                'cgst_amount':        cgst_amt,
+                'sgst_amount':        sgst_amt,
+                'igst_amount':        igst_amt,
                 'line_total':         line_total,
             })
 
-        # ── Step 2: Create the SalesBill ───────────────────────────────────
+        # ── Step 3: Create the SalesBill ──────────────────────────────────────
         bill = SalesBill.objects.create(
             billed_by      = request.user,
             subtotal       = subtotal.quantize(Decimal('0.01')),
             total_tax      = total_tax.quantize(Decimal('0.01')),
+            total_cgst     = total_cgst.quantize(Decimal('0.01')),
+            total_sgst     = total_sgst.quantize(Decimal('0.01')),
+            total_igst     = total_igst.quantize(Decimal('0.01')),
             discount       = discount,
             grand_total    = (subtotal + total_tax - discount).quantize(Decimal('0.01')),
             items_snapshot = items_snapshot,
             customer_phone = validated_data.get('customer_phone') or None,
             customer_name  = validated_data.get('customer_name')  or None,
             payment_mode   = validated_data.get('payment_mode', 'CASH'),
+            is_b2b         = is_b2b,
+            customer_gstin = customer_gstin if customer_gstin else None,
         )
 
-        # ── Step 3: Bulk create all SalesItem rows ─────────────────────────
+        # ── Step 4: Bulk create all SalesItem rows ────────────────────────────
         pharmacy = get_current_pharmacy()
         SalesItem.objects.bulk_create([
             SalesItem(sales_bill=bill, pharmacy=pharmacy, **item_data)
@@ -1514,25 +1255,22 @@ class SalesReturnSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
-        # Restore stock to the exact batch it was sold from
-        self._batch.available_quantity += validated_data['return_quantity']
-        self._batch.save()
+        # Bug 3 fix: re-fetch the batch WITH a lock inside this atomic block
+        # so concurrent returns on the same sales_item cannot both restore stock
+        # from the same stale in-memory object.
+        batch = InventoryBatch.objects.select_for_update().get(pk=self._batch.pk)
+        batch.available_quantity += validated_data['return_quantity']
+        batch.save()
 
         return SalesReturn.objects.create(**validated_data)
 
-================================================================================
-File: billing/tests.py
-================================================================================
-
+--- FILE: billing/tests.py ---
 from django.test import TestCase
 
 # Create your tests here.
 
 
-================================================================================
-File: billing/urls.py
-================================================================================
-
+--- FILE: billing/urls.py ---
 from django.urls import path
 from .views import (
     CheckoutView,
@@ -1550,10 +1288,7 @@ urlpatterns = [
     path('return/',                    SalesReturnView.as_view(),     name='sales_return'),
 ]
 
-================================================================================
-File: billing/views.py
-================================================================================
-
+--- FILE: billing/views.py ---
 from rest_framework import generics, status
 from rest_framework.response import Response
 from accounts.permissions import IsClerkOrHigher, IsOwnerOrHigher
@@ -1590,9 +1325,10 @@ class CheckoutView(generics.CreateAPIView):
                 status=status.HTTP_201_CREATED
             )
         except Exception as e:
+            # Bug 8 fix: log internally, never expose traceback to clients
             logger.error(f"Checkout error: {traceback.format_exc()}")
             return Response(
-                {"error": str(e), "traceback": traceback.format_exc()},
+                {"error": "A server error occurred during checkout. Please try again."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -1678,105 +1414,28 @@ class SalesReturnView(generics.CreateAPIView):
             status=status.HTTP_201_CREATED
         )
 
-================================================================================
-File: billing/migrations/0001_initial.py
-================================================================================
+--- FILE: docker-compose.yml ---
+services:
+  db:
+    image: postgres:15
+    container_name: pharmacy_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: pharmacy_db
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: securepassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
 
-# Generated by Django 6.0.3 on 2026-03-19 15:21
+volumes:
+  pg_data:
 
-import django.db.models.deletion
-import django.utils.timezone
-import uuid
-from decimal import Decimal
-from django.conf import settings
-from django.db import migrations, models
-
-
-class Migration(migrations.Migration):
-
-    initial = True
-
-    dependencies = [
-        ('accounts', '0002_pharmacy_settings'),
-        ('inventory', '0004_purchasereturn_mrp'),
-        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-    ]
-
-    operations = [
-        migrations.CreateModel(
-            name='SalesBill',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('customer_phone', models.CharField(blank=True, db_index=True, max_length=15, null=True)),
-                ('customer_name', models.CharField(blank=True, max_length=255, null=True)),
-                ('bill_date', models.DateTimeField(default=django.utils.timezone.now)),
-                ('subtotal', models.DecimalField(decimal_places=2, default=Decimal('0.00'), max_digits=10)),
-                ('total_tax', models.DecimalField(decimal_places=2, default=Decimal('0.00'), max_digits=10)),
-                ('discount', models.DecimalField(decimal_places=2, default=Decimal('0.00'), max_digits=10)),
-                ('grand_total', models.DecimalField(decimal_places=2, default=Decimal('0.00'), max_digits=10)),
-                ('payment_mode', models.CharField(choices=[('CASH', 'Cash'), ('UPI', 'UPI'), ('CREDIT', 'Credit')], default='CASH', max_length=20)),
-                ('items_snapshot', models.JSONField(default=list)),
-                ('billed_by', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='sales_bills', to=settings.AUTH_USER_MODEL)),
-                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
-            ],
-            options={
-                'abstract': False,
-            },
-        ),
-        migrations.CreateModel(
-            name='SalesItem',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('batch_number', models.CharField(max_length=100)),
-                ('quantity', models.IntegerField()),
-                ('mrp_per_strip', models.DecimalField(decimal_places=2, max_digits=10)),
-                ('sale_rate_per_unit', models.DecimalField(decimal_places=4, max_digits=10)),
-                ('gst_percentage', models.DecimalField(decimal_places=2, max_digits=5)),
-                ('line_total', models.DecimalField(decimal_places=2, max_digits=10)),
-                ('inventory_batch', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='sales_items', to='inventory.inventorybatch')),
-                ('medicine', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, to='inventory.medicinemaster')),
-                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
-                ('sales_bill', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='items', to='billing.salesbill')),
-            ],
-            options={
-                'abstract': False,
-            },
-        ),
-        migrations.CreateModel(
-            name='SalesReturn',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('return_quantity', models.IntegerField()),
-                ('refund_amount', models.DecimalField(decimal_places=2, max_digits=10)),
-                ('return_date', models.DateField(default=django.utils.timezone.now)),
-                ('reason', models.CharField(default='Customer Return', max_length=255)),
-                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
-                ('sales_bill', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='returns', to='billing.salesbill')),
-                ('sales_item', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='returns', to='billing.salesitem')),
-            ],
-            options={
-                'abstract': False,
-            },
-        ),
-    ]
+--- FILE: inventory/__init__.py ---
 
 
-================================================================================
-File: billing/migrations/__init__.py
-================================================================================
-
-
-
-================================================================================
-File: inventory/__init__.py
-================================================================================
-
-
-
-================================================================================
-File: inventory/admin.py
-================================================================================
-
+--- FILE: inventory/admin.py ---
 from django.contrib import admin
 from .models import Supplier, MedicineMaster, WarehouseBlock, ShelfLocation, StockAdjustment
 
@@ -1786,10 +1445,7 @@ admin.site.register(WarehouseBlock)
 admin.site.register(ShelfLocation)
 admin.site.register(StockAdjustment)
 
-================================================================================
-File: inventory/apps.py
-================================================================================
-
+--- FILE: inventory/apps.py ---
 from django.apps import AppConfig
 
 
@@ -1797,10 +1453,7 @@ class InventoryConfig(AppConfig):
     name = 'inventory'
 
 
-================================================================================
-File: inventory/models.py
-================================================================================
-
+--- FILE: inventory/models.py ---
 from django.db import models
 from accounts.models import TenantModel
 from django.utils import timezone
@@ -1814,6 +1467,7 @@ class Supplier(TenantModel):
     email = models.EmailField(blank=True, null=True)
     address = models.TextField(blank=True, null=True)
     gstin = models.CharField(max_length=15, blank=True, null=True)
+    state = models.CharField(max_length=100, default="Maharashtra", help_text="Used for calculating Inter/Intra state GST")
 
     # SOFT DELETE: If a supplier goes out of business, we set this to False.
     # We NEVER delete the row, otherwise old purchase bills would crash.
@@ -1849,6 +1503,9 @@ class PurchaseBill(TenantModel):
     # Only 'discount' is user-supplied.
     subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     total_tax = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_cgst = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_sgst = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_igst = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     grand_total = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
 
@@ -1881,7 +1538,15 @@ class PurchaseItem(TenantModel):
 
     # purchase_rate_base = per-STRIP base price BEFORE GST
     purchase_rate_base = models.DecimalField(max_digits=10, decimal_places=2)
+    discount_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    
+    # Tax fields
+    taxable_value = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     gst_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    cgst_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    sgst_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    igst_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+
     mrp = models.DecimalField(max_digits=10, decimal_places=2)
 
     def __str__(self):
@@ -1981,7 +1646,7 @@ class InventoryBatch(TenantModel):
         # When a second invoice arrives with the same batch/MRP, we UPSERT (increment qty).
         constraints = [
             models.UniqueConstraint(
-                fields=['pharmacy', 'medicine', 'batch_number', 'mrp'],
+                fields=['pharmacy', 'medicine', 'batch_number', 'mrp', 'gst_percentage'],
                 name='unique_batch_mrp_per_pharmacy'
             )
         ]
@@ -2051,7 +1716,6 @@ class SupplierReturnPolicy(TenantModel):
         on_delete=models.CASCADE,
         related_name='return_policy'
     )
-    # Supplier accepts returns until this many days before expiry
     return_window_days = models.IntegerField(
         default=90,
         help_text="Days before expiry date by which returns must be initiated"
@@ -2060,12 +1724,18 @@ class SupplierReturnPolicy(TenantModel):
         default=True,
         help_text="Does this supplier issue GST credit notes on returns?"
     )
-    # How many days advance notice YOU need to arrange the physical return
     advance_notice_days = models.IntegerField(
         default=14,
         help_text="Alert fires this many days before the return window closes"
     )
     notes = models.TextField(blank=True, null=True)
+
+    def save(self, *args, **kwargs):
+        # Bug 4 fix: derive pharmacy from supplier so Celery tasks (which have
+        # no request context) don't raise ValueError from TenantModel.save().
+        if self._state.adding and getattr(self, 'pharmacy_id', None) is None:
+            self.pharmacy = self.supplier.pharmacy
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.supplier.name} — return by {self.return_window_days}d before expiry"
@@ -2149,16 +1819,20 @@ class ReturnAlert(TenantModel):
     actioned_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    def save(self, *args, **kwargs):
+        # Bug 4 fix: derive pharmacy from the linked InventoryBatch's pharmacy
+        # so Celery alert-generation tasks (no request context) don't crash.
+        if self._state.adding and getattr(self, 'pharmacy_id', None) is None:
+            self.pharmacy = self.inventory_batch.pharmacy
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return (
             f"Alert: {self.inventory_batch.medicine.name} "
             f"— return by {self.return_deadline}"
         )
 
-================================================================================
-File: inventory/serializers.py
-================================================================================
-
+--- FILE: inventory/serializers.py ---
 # inventory/serializers.py
 from decimal import Decimal
 from rest_framework import serializers
@@ -2203,7 +1877,7 @@ class PurchaseItemSerializer(serializers.ModelSerializer):
         fields = [
             'medicine', 'batch_number', 'expiry_date',
             'quantity', 'free_quantity',
-            'purchase_rate_base', 'gst_percentage', 'mrp'
+            'purchase_rate_base', 'discount_percentage', 'gst_percentage', 'mrp'
         ]
 
 
@@ -2224,34 +1898,73 @@ class PurchaseBillSerializer(serializers.ModelSerializer):
         model = PurchaseBill
         fields = [
             'id', 'supplier', 'invoice_number', 'bill_date',
-            'subtotal', 'total_tax', 'discount', 'grand_total',
-            'payment_status', 'items'
+            'subtotal', 'total_tax', 'total_cgst', 'total_sgst', 'total_igst',
+            'discount', 'grand_total', 'payment_status', 'items'
         ]
-        read_only_fields = ['id', 'pharmacy', 'subtotal', 'total_tax', 'grand_total']
+        read_only_fields = [
+            'id', 'pharmacy', 'subtotal', 'total_tax', 
+            'total_cgst', 'total_sgst', 'total_igst', 'grand_total'
+        ]
 
     def create(self, validated_data):
         items_data = validated_data.pop('items')
         discount = validated_data.get('discount', Decimal('0.00'))
+        
+        supplier = validated_data['supplier']
 
         with transaction.atomic():
             bill = PurchaseBill.objects.create(**validated_data)
+            pharmacy = bill.pharmacy
+
+            is_inter_state = False
+            if supplier.state and pharmacy.state:
+                is_inter_state = supplier.state.strip().lower() != pharmacy.state.strip().lower()
 
             running_subtotal = Decimal('0.00')
-            running_tax = Decimal('0.00')
+            running_tax      = Decimal('0.00')
+            running_cgst     = Decimal('0.00')
+            running_sgst     = Decimal('0.00')
+            running_igst     = Decimal('0.00')
 
             for item_data in items_data:
-                PurchaseItem.objects.create(purchase_bill=bill, **item_data)
-
                 qty      = item_data['quantity']
                 free_qty = item_data.get('free_quantity', 0)
                 rate     = item_data['purchase_rate_base']
+                discount_pct = item_data.get('discount_percentage', Decimal('0.00'))
                 gst      = item_data['gst_percentage']
 
                 # FINANCIAL CALC: strips × rate (rate is per-strip)
-                line_subtotal = rate * qty
-                line_tax      = line_subtotal * (gst / Decimal('100'))
-                running_subtotal += line_subtotal
+                line_gross    = rate * qty
+                line_discount = line_gross * (discount_pct / Decimal('100'))
+                line_base     = line_gross - line_discount
+                
+                line_tax      = line_base * (gst / Decimal('100'))
+                
+                # Tax breakdown per item
+                cgst_amt = Decimal('0.00')
+                sgst_amt = Decimal('0.00')
+                igst_amt = Decimal('0.00')
+
+                if is_inter_state:
+                    igst_amt = line_tax
+                else:
+                    cgst_amt = line_tax / Decimal('2')
+                    sgst_amt = line_tax / Decimal('2')
+
+                PurchaseItem.objects.create(
+                    purchase_bill=bill,
+                    taxable_value=line_base,
+                    cgst_amount=cgst_amt,
+                    sgst_amount=sgst_amt,
+                    igst_amount=igst_amt,
+                    **item_data
+                )
+
+                running_subtotal += line_base
                 running_tax      += line_tax
+                running_cgst     += cgst_amt
+                running_sgst     += sgst_amt
+                running_igst     += igst_amt
 
                 # STOCK UPDATE: convert strips → tablets via pack_qty
                 pack_qty    = item_data['medicine'].pack_qty
@@ -2261,10 +1974,11 @@ class PurchaseBillSerializer(serializers.ModelSerializer):
                     medicine=item_data['medicine'],
                     batch_number=item_data['batch_number'],
                     mrp=item_data['mrp'],
+                    gst_percentage=item_data['gst_percentage'],
                     defaults={
                         'expiry_date':        item_data['expiry_date'],
                         'available_quantity': total_units,
-                        'gst_percentage':     item_data['gst_percentage'],
+                        
                     }
                 )
 
@@ -2274,6 +1988,9 @@ class PurchaseBillSerializer(serializers.ModelSerializer):
 
             bill.subtotal    = running_subtotal
             bill.total_tax   = running_tax
+            bill.total_cgst  = running_cgst
+            bill.total_sgst  = running_sgst
+            bill.total_igst  = running_igst
             bill.grand_total = running_subtotal + running_tax - discount
             bill.save()
 
@@ -2684,10 +2401,7 @@ class StockAdjustmentSerializer(serializers.ModelSerializer):
             'adjusted_by_phone', 'adjusted_at', 'reason', 'source',
         ]
 
-================================================================================
-File: inventory/tests.py
-================================================================================
-
+--- FILE: inventory/tests.py ---
 # inventory/tests.py
 from decimal import Decimal
 from django.test import TestCase
@@ -2983,10 +2697,7 @@ class PermissionTest(BaseInventoryTest):
         self.assertEqual(len(response.data['results']), 0)
 
 
-================================================================================
-File: inventory/urls.py
-================================================================================
-
+--- FILE: inventory/urls.py ---
 # inventory/urls.py
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
@@ -3030,10 +2741,7 @@ urlpatterns = [
     path('adjustments/',                           StockAdjustmentListView.as_view(), name='adjustment_list'),
 ]
 
-================================================================================
-File: inventory/views.py
-================================================================================
-
+--- FILE: inventory/views.py ---
 # inventory/views.py
 from rest_framework import viewsets, generics, status
 from rest_framework.response import Response
@@ -3295,341 +3003,54 @@ class StockAdjustmentListView(generics.ListAPIView):
             qs = qs.filter(inventory_batch_id=batch_id)
         return qs
 
-================================================================================
-File: inventory/migrations/0001_initial.py
-================================================================================
-
-# Generated by Django 6.0.3 on 2026-03-13 21:55
-
-import django.db.models.deletion
-import uuid
-from django.db import migrations, models
+--- FILE: manage.py ---
+#!/usr/bin/env python
+"""Django's command-line utility for administrative tasks."""
+import os
+import sys
 
 
-class Migration(migrations.Migration):
-
-    initial = True
-
-    dependencies = [
-        ('accounts', '0002_pharmacy_settings'),
-    ]
-
-    operations = [
-        migrations.CreateModel(
-            name='MedicineMaster',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('name', models.CharField(max_length=255)),
-                ('company', models.CharField(max_length=255)),
-                ('category', models.CharField(max_length=50)),
-                ('hsn_code', models.CharField(blank=True, max_length=20, null=True)),
-                ('is_active', models.BooleanField(default=True)),
-                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
-            ],
-            options={
-                'abstract': False,
-            },
-        ),
-        migrations.CreateModel(
-            name='Supplier',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('name', models.CharField(max_length=255)),
-                ('contact_person', models.CharField(blank=True, max_length=255, null=True)),
-                ('phone', models.CharField(blank=True, max_length=20, null=True)),
-                ('email', models.EmailField(blank=True, max_length=254, null=True)),
-                ('address', models.TextField(blank=True, null=True)),
-                ('gstin', models.CharField(blank=True, max_length=15, null=True)),
-                ('is_active', models.BooleanField(default=True)),
-                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
-            ],
-            options={
-                'abstract': False,
-            },
-        ),
-    ]
+def main():
+    """Run administrative tasks."""
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend_core.settings')
+    try:
+        from django.core.management import execute_from_command_line
+    except ImportError as exc:
+        raise ImportError(
+            "Couldn't import Django. Are you sure it's installed and "
+            "available on your PYTHONPATH environment variable? Did you "
+            "forget to activate a virtual environment?"
+        ) from exc
+    execute_from_command_line(sys.argv)
 
 
-================================================================================
-File: inventory/migrations/0002_medicinemaster_default_gst_percentage_and_more.py
-================================================================================
-
-# Generated by Django 6.0.3 on 2026-03-16 18:22
-
-import django.db.models.deletion
-import django.utils.timezone
-import uuid
-from decimal import Decimal
-from django.db import migrations, models
+if __name__ == '__main__':
+    main()
 
 
-class Migration(migrations.Migration):
-
-    dependencies = [
-        ('accounts', '0002_pharmacy_settings'),
-        ('inventory', '0001_initial'),
-    ]
-
-    operations = [
-        migrations.AddField(
-            model_name='medicinemaster',
-            name='default_gst_percentage',
-            field=models.DecimalField(decimal_places=2, default=Decimal('0.00'), max_digits=5),
-        ),
-        migrations.AddField(
-            model_name='medicinemaster',
-            name='pack_qty',
-            field=models.IntegerField(default=1),
-        ),
-        migrations.AddField(
-            model_name='medicinemaster',
-            name='packaging',
-            field=models.CharField(blank=True, help_text='e.g., 1x10, 1x15', max_length=50, null=True),
-        ),
-        migrations.CreateModel(
-            name='PurchaseBill',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('invoice_number', models.CharField(max_length=100)),
-                ('bill_date', models.DateField(default=django.utils.timezone.now)),
-                ('subtotal', models.DecimalField(decimal_places=2, default=Decimal('0.00'), max_digits=10)),
-                ('total_tax', models.DecimalField(decimal_places=2, default=Decimal('0.00'), max_digits=10)),
-                ('discount', models.DecimalField(decimal_places=2, default=Decimal('0.00'), max_digits=10)),
-                ('grand_total', models.DecimalField(decimal_places=2, default=Decimal('0.00'), max_digits=10)),
-                ('payment_status', models.CharField(choices=[('PENDING', 'Pending'), ('PARTIAL', 'Partial'), ('PAID', 'Paid')], default='PENDING', max_length=20)),
-                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
-                ('supplier', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='purchase_bills', to='inventory.supplier')),
-            ],
-        ),
-        migrations.CreateModel(
-            name='PurchaseItem',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('batch_number', models.CharField(max_length=100)),
-                ('expiry_date', models.DateField()),
-                ('quantity', models.IntegerField()),
-                ('free_quantity', models.IntegerField(default=0)),
-                ('purchase_rate_base', models.DecimalField(decimal_places=2, max_digits=10)),
-                ('gst_percentage', models.DecimalField(decimal_places=2, default=Decimal('0.00'), max_digits=5)),
-                ('mrp', models.DecimalField(decimal_places=2, max_digits=10)),
-                ('medicine', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, to='inventory.medicinemaster')),
-                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
-                ('purchase_bill', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='items', to='inventory.purchasebill')),
-            ],
-            options={
-                'abstract': False,
-            },
-        ),
-        migrations.CreateModel(
-            name='PurchaseReturn',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('batch_number', models.CharField(max_length=100)),
-                ('return_quantity', models.IntegerField()),
-                ('refund_amount', models.DecimalField(decimal_places=2, max_digits=10)),
-                ('return_date', models.DateField(default=django.utils.timezone.now)),
-                ('reason', models.CharField(default='Expired', max_length=255)),
-                ('medicine', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, to='inventory.medicinemaster')),
-                ('original_bill', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='inventory.purchasebill')),
-                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
-                ('supplier', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='returns', to='inventory.supplier')),
-            ],
-            options={
-                'abstract': False,
-            },
-        ),
-        migrations.CreateModel(
-            name='InventoryBatch',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('batch_number', models.CharField(max_length=100)),
-                ('expiry_date', models.DateField()),
-                ('available_quantity', models.IntegerField()),
-                ('gst_percentage', models.DecimalField(decimal_places=2, default=Decimal('0.00'), max_digits=5)),
-                ('mrp', models.DecimalField(decimal_places=2, max_digits=10)),
-                ('medicine', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='live_batches', to='inventory.medicinemaster')),
-                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
-            ],
-            options={
-                'constraints': [models.UniqueConstraint(fields=('pharmacy', 'medicine', 'batch_number', 'mrp'), name='unique_batch_mrp_per_pharmacy')],
-            },
-        ),
-        migrations.AddConstraint(
-            model_name='purchasebill',
-            constraint=models.UniqueConstraint(fields=('pharmacy', 'supplier', 'invoice_number'), name='unique_invoice_per_supplier_per_pharmacy'),
-        ),
-    ]
-
-
-================================================================================
-File: inventory/migrations/0003_shelflocation_inventorybatch_shelf_stockadjustment_and_more.py
-================================================================================
-
-# Generated by Django 6.0.3 on 2026-03-16 23:02
-
-import django.db.models.deletion
-import uuid
-from django.conf import settings
-from django.db import migrations, models
-
-
-class Migration(migrations.Migration):
-
-    dependencies = [
-        ('accounts', '0002_pharmacy_settings'),
-        ('inventory', '0002_medicinemaster_default_gst_percentage_and_more'),
-        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-    ]
-
-    operations = [
-        migrations.CreateModel(
-            name='ShelfLocation',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('shelf_number', models.IntegerField(help_text='Shelf number within the block, 1-indexed')),
-                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
-            ],
-        ),
-        migrations.AddField(
-            model_name='inventorybatch',
-            name='shelf',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='batches', to='inventory.shelflocation'),
-        ),
-        migrations.CreateModel(
-            name='StockAdjustment',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('old_quantity', models.IntegerField()),
-                ('new_quantity', models.IntegerField()),
-                ('delta', models.IntegerField(help_text='new_quantity - old_quantity. Negative = shrinkage.')),
-                ('adjusted_at', models.DateTimeField(auto_now_add=True)),
-                ('reason', models.CharField(default='Weekly Sync', max_length=255)),
-                ('source', models.CharField(choices=[('SYNC', 'Weekly Sync'), ('MANUAL', 'Manual Adjustment')], default='SYNC', max_length=20)),
-                ('adjusted_by', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, to=settings.AUTH_USER_MODEL)),
-                ('inventory_batch', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='adjustments', to='inventory.inventorybatch')),
-                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
-                ('shelf', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='inventory.shelflocation')),
-            ],
-            options={
-                'abstract': False,
-            },
-        ),
-        migrations.CreateModel(
-            name='WarehouseBlock',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('block_letter', models.CharField(help_text="Single uppercase letter identifying this block, e.g. 'A', 'B', 'C'", max_length=1)),
-                ('shelf_count', models.IntegerField(help_text='Number of shelves in this block')),
-                ('label', models.CharField(blank=True, help_text="Optional descriptive label, e.g. 'Refrigerated', 'Antibiotics'", max_length=100, null=True)),
-                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
-            ],
-        ),
-        migrations.AddField(
-            model_name='shelflocation',
-            name='block',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='shelves', to='inventory.warehouseblock'),
-        ),
-        migrations.AddConstraint(
-            model_name='warehouseblock',
-            constraint=models.UniqueConstraint(fields=('pharmacy', 'block_letter'), name='unique_block_letter_per_pharmacy'),
-        ),
-        migrations.AddConstraint(
-            model_name='shelflocation',
-            constraint=models.UniqueConstraint(fields=('pharmacy', 'block', 'shelf_number'), name='unique_shelf_per_block_per_pharmacy'),
-        ),
-    ]
-
-
-================================================================================
-File: inventory/migrations/0004_purchasereturn_mrp.py
-================================================================================
-
-# Generated by Django 6.0.3 on 2026-03-18 20:05
-
-from django.db import migrations, models
-
-
-class Migration(migrations.Migration):
-
-    dependencies = [
-        ('inventory', '0003_shelflocation_inventorybatch_shelf_stockadjustment_and_more'),
-    ]
-
-    operations = [
-        migrations.AddField(
-            model_name='purchasereturn',
-            name='mrp',
-            field=models.DecimalField(decimal_places=2, default=0, max_digits=10),
-            preserve_default=False,
-        ),
-    ]
-
-
-================================================================================
-File: inventory/migrations/0005_returnalert_supplierreturnpolicy.py
-================================================================================
-
-# Generated by Django 6.0.3 on 2026-03-24 11:38
-
-import django.db.models.deletion
-import uuid
-from decimal import Decimal
-from django.conf import settings
-from django.db import migrations, models
-
-
-class Migration(migrations.Migration):
-
-    dependencies = [
-        ('accounts', '0003_organization_customuser_organization_and_more'),
-        ('inventory', '0004_purchasereturn_mrp'),
-        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-    ]
-
-    operations = [
-        migrations.CreateModel(
-            name='ReturnAlert',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('return_deadline', models.DateField(help_text='Last date supplier accepts this return')),
-                ('alert_date', models.DateField(help_text='Date this alert was surfaced to the owner')),
-                ('gst_quarter_deadline', models.DateField(blank=True, help_text='GST filing deadline for the quarter this return falls in', null=True)),
-                ('gst_credit_at_risk', models.DecimalField(decimal_places=2, default=Decimal('0.00'), help_text='Estimated GST input credit lost if return is missed', max_digits=10)),
-                ('gst_warning', models.BooleanField(default=False)),
-                ('estimated_sell_quantity', models.IntegerField(default=0, help_text='Predicted units sellable before expiry based on velocity')),
-                ('recommendation', models.CharField(choices=[('SELL', 'Sell before expiry'), ('RETURN', 'Return to supplier'), ('PARTIAL', 'Sell some, return rest')], default='RETURN', max_length=10)),
-                ('status', models.CharField(choices=[('PENDING', 'Pending Decision'), ('RETURN', 'Marked for Return'), ('SELL', 'Decision: Sell Before Expiry'), ('IGNORED', 'Ignored')], default='PENDING', max_length=20)),
-                ('actioned_at', models.DateTimeField(blank=True, null=True)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('actioned_by', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to=settings.AUTH_USER_MODEL)),
-                ('inventory_batch', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='return_alerts', to='inventory.inventorybatch')),
-                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
-                ('supplier', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='return_alerts', to='inventory.supplier')),
-            ],
-            options={
-                'abstract': False,
-            },
-        ),
-        migrations.CreateModel(
-            name='SupplierReturnPolicy',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('return_window_days', models.IntegerField(default=90, help_text='Days before expiry date by which returns must be initiated')),
-                ('gst_credit_eligible', models.BooleanField(default=True, help_text='Does this supplier issue GST credit notes on returns?')),
-                ('advance_notice_days', models.IntegerField(default=14, help_text='Alert fires this many days before the return window closes')),
-                ('notes', models.TextField(blank=True, null=True)),
-                ('pharmacy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='%(class)s_set', to='accounts.pharmacy')),
-                ('supplier', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='return_policy', to='inventory.supplier')),
-            ],
-            options={
-                'abstract': False,
-            },
-        ),
-    ]
-
-
-================================================================================
-File: inventory/migrations/__init__.py
-================================================================================
+--- FILE: requirements.txt ---
+asgiref==3.11.1
+attrs==26.1.0
+dj-database-url==3.1.2
+Django==6.0.3
+django-cors-headers==4.9.0
+djangorestframework==3.16.1
+djangorestframework_simplejwt==5.5.1
+drf-spectacular==0.29.0
+gunicorn==25.1.0
+inflection==0.5.1
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+packaging==26.0
+psycopg2-binary==2.9.11
+PyJWT==2.11.0
+python-decouple==3.8
+PyYAML==6.0.3
+referencing==0.37.0
+rpds-py==0.30.0
+sqlparse==0.5.5
+typing_extensions==4.15.0
+uritemplate==4.2.0
+whitenoise==6.12.0
 
 

@@ -42,7 +42,7 @@ class PurchaseItemSerializer(serializers.ModelSerializer):
         fields = [
             'medicine', 'batch_number', 'expiry_date',
             'quantity', 'free_quantity',
-            'purchase_rate_base', 'gst_percentage', 'mrp'
+            'purchase_rate_base', 'discount_percentage', 'gst_percentage', 'mrp'
         ]
 
 
@@ -63,34 +63,73 @@ class PurchaseBillSerializer(serializers.ModelSerializer):
         model = PurchaseBill
         fields = [
             'id', 'supplier', 'invoice_number', 'bill_date',
-            'subtotal', 'total_tax', 'discount', 'grand_total',
-            'payment_status', 'items'
+            'subtotal', 'total_tax', 'total_cgst', 'total_sgst', 'total_igst',
+            'discount', 'grand_total', 'payment_status', 'items'
         ]
-        read_only_fields = ['id', 'pharmacy', 'subtotal', 'total_tax', 'grand_total']
+        read_only_fields = [
+            'id', 'pharmacy', 'subtotal', 'total_tax', 
+            'total_cgst', 'total_sgst', 'total_igst', 'grand_total'
+        ]
 
     def create(self, validated_data):
         items_data = validated_data.pop('items')
         discount = validated_data.get('discount', Decimal('0.00'))
+        
+        supplier = validated_data['supplier']
 
         with transaction.atomic():
             bill = PurchaseBill.objects.create(**validated_data)
+            pharmacy = bill.pharmacy
+
+            is_inter_state = False
+            if supplier.state and pharmacy.state:
+                is_inter_state = supplier.state.strip().lower() != pharmacy.state.strip().lower()
 
             running_subtotal = Decimal('0.00')
-            running_tax = Decimal('0.00')
+            running_tax      = Decimal('0.00')
+            running_cgst     = Decimal('0.00')
+            running_sgst     = Decimal('0.00')
+            running_igst     = Decimal('0.00')
 
             for item_data in items_data:
-                PurchaseItem.objects.create(purchase_bill=bill, **item_data)
-
                 qty      = item_data['quantity']
                 free_qty = item_data.get('free_quantity', 0)
                 rate     = item_data['purchase_rate_base']
+                discount_pct = item_data.get('discount_percentage', Decimal('0.00'))
                 gst      = item_data['gst_percentage']
 
                 # FINANCIAL CALC: strips × rate (rate is per-strip)
-                line_subtotal = rate * qty
-                line_tax      = line_subtotal * (gst / Decimal('100'))
-                running_subtotal += line_subtotal
+                line_gross    = rate * qty
+                line_discount = line_gross * (discount_pct / Decimal('100'))
+                line_base     = line_gross - line_discount
+                
+                line_tax      = line_base * (gst / Decimal('100'))
+                
+                # Tax breakdown per item
+                cgst_amt = Decimal('0.00')
+                sgst_amt = Decimal('0.00')
+                igst_amt = Decimal('0.00')
+
+                if is_inter_state:
+                    igst_amt = line_tax
+                else:
+                    cgst_amt = line_tax / Decimal('2')
+                    sgst_amt = line_tax / Decimal('2')
+
+                PurchaseItem.objects.create(
+                    purchase_bill=bill,
+                    taxable_value=line_base,
+                    cgst_amount=cgst_amt,
+                    sgst_amount=sgst_amt,
+                    igst_amount=igst_amt,
+                    **item_data
+                )
+
+                running_subtotal += line_base
                 running_tax      += line_tax
+                running_cgst     += cgst_amt
+                running_sgst     += sgst_amt
+                running_igst     += igst_amt
 
                 # STOCK UPDATE: convert strips → tablets via pack_qty
                 pack_qty    = item_data['medicine'].pack_qty
@@ -100,10 +139,11 @@ class PurchaseBillSerializer(serializers.ModelSerializer):
                     medicine=item_data['medicine'],
                     batch_number=item_data['batch_number'],
                     mrp=item_data['mrp'],
+                    gst_percentage=item_data['gst_percentage'],
                     defaults={
                         'expiry_date':        item_data['expiry_date'],
                         'available_quantity': total_units,
-                        'gst_percentage':     item_data['gst_percentage'],
+                        
                     }
                 )
 
@@ -113,6 +153,9 @@ class PurchaseBillSerializer(serializers.ModelSerializer):
 
             bill.subtotal    = running_subtotal
             bill.total_tax   = running_tax
+            bill.total_cgst  = running_cgst
+            bill.total_sgst  = running_sgst
+            bill.total_igst  = running_igst
             bill.grand_total = running_subtotal + running_tax - discount
             bill.save()
 

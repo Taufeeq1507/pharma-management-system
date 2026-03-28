@@ -16,15 +16,17 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
         # Bug 6 fix: include organization so Chain Owner features work
-        fields = ['id', 'phone_number', 'privilege_level', 'pharmacy', 'organization']
+        fields = ['id', 'name', 'phone_number', 'privilege_level', 'pharmacy', 'organization']
 
 
 class RegisterPharmacySerializer(serializers.Serializer):
     pharmacy_name = serializers.CharField(max_length=255)
+    owner_name = serializers.CharField(max_length=255)
     gstin = serializers.CharField(max_length=15, required=False, allow_blank=True)
     drug_license_no = serializers.CharField(max_length=100, required=False, allow_blank=True)
     phone_number = serializers.CharField(max_length=15)
     password = serializers.CharField(write_only=True)
+    is_chain = serializers.BooleanField(default=False)
 
     def validate_phone_number(self, value):
         if CustomUser.objects.filter(phone_number=value).exists():
@@ -47,12 +49,15 @@ class RegisterPharmacySerializer(serializers.Serializer):
                 organization=org
             )
 
+            privilege_level = 4 if validated_data.get('is_chain', False) else 2
+
             user = CustomUser.objects.create_user(
                 phone_number=validated_data['phone_number'],
+                name=validated_data['owner_name'],
                 password=validated_data['password'],
                 pharmacy=pharmacy,
                 organization=org,
-                privilege_level=2
+                privilege_level=privilege_level
             )
 
         return user
@@ -63,7 +68,7 @@ class StaffCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomUser
-        fields = ['id', 'phone_number', 'password', 'privilege_level']
+        fields = ['id', 'name', 'phone_number', 'password', 'privilege_level']
         read_only_fields = ['id']
 
     def create(self, validated_data):
@@ -89,6 +94,7 @@ class StaffCreateSerializer(serializers.ModelSerializer):
 
         user = CustomUser.objects.create_user(
             phone_number=validated_data['phone_number'],
+            name=validated_data.get('name', ''),
             password=validated_data['password'],
             pharmacy=owner_pharmacy,
             organization=owner_pharmacy.organization,

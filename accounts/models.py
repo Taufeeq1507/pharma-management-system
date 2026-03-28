@@ -71,6 +71,7 @@ class Pharmacy(models.Model):
     )
     name = models.CharField(max_length=255)
     gstin = models.CharField(max_length=15, unique=True, null=True, blank=True)
+    state = models.CharField(max_length=100, default="Maharashtra", help_text="Used for CGST/SGST vs IGST calculation")
     drug_license_no = models.CharField(max_length=100, unique=True, null=True, blank=True)
     subscription_plan = models.CharField(max_length=50, default="Tier 2")
     settings = models.JSONField(default=dict, blank=True)
@@ -81,10 +82,10 @@ class Pharmacy(models.Model):
 
 
 class CustomUserManager(BaseUserManager):
-    def create_user(self, phone_number, password=None, **extra_fields):
+    def create_user(self, phone_number, name='', password=None, **extra_fields):
         if not phone_number:
             raise ValueError('The Phone Number must be set')
-        user = self.model(phone_number=phone_number, **extra_fields)
+        user = self.model(phone_number=phone_number, name=name, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
         return user
@@ -93,13 +94,14 @@ class CustomUserManager(BaseUserManager):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('privilege_level', 5)
-        return self.create_user(phone_number, password, **extra_fields)
+        return self.create_user(phone_number, name="Superuser", password=password, **extra_fields)
 
 
 class CustomUser(AbstractUser):
     username = None
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255, blank=True)
     phone_number = models.CharField(max_length=15, unique=True)
     pharmacy = models.ForeignKey(Pharmacy, on_delete=models.CASCADE, null=True, blank=True)
     organization = models.ForeignKey(

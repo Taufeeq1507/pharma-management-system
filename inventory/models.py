@@ -11,6 +11,7 @@ class Supplier(TenantModel):
     email = models.EmailField(blank=True, null=True)
     address = models.TextField(blank=True, null=True)
     gstin = models.CharField(max_length=15, blank=True, null=True)
+    state = models.CharField(max_length=100, default="Maharashtra", help_text="Used for calculating Inter/Intra state GST")
 
     # SOFT DELETE: If a supplier goes out of business, we set this to False.
     # We NEVER delete the row, otherwise old purchase bills would crash.
@@ -46,6 +47,9 @@ class PurchaseBill(TenantModel):
     # Only 'discount' is user-supplied.
     subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     total_tax = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_cgst = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_sgst = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_igst = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     grand_total = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
 
@@ -78,7 +82,15 @@ class PurchaseItem(TenantModel):
 
     # purchase_rate_base = per-STRIP base price BEFORE GST
     purchase_rate_base = models.DecimalField(max_digits=10, decimal_places=2)
+    discount_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    
+    # Tax fields
+    taxable_value = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     gst_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    cgst_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    sgst_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    igst_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+
     mrp = models.DecimalField(max_digits=10, decimal_places=2)
 
     def __str__(self):
@@ -178,7 +190,7 @@ class InventoryBatch(TenantModel):
         # When a second invoice arrives with the same batch/MRP, we UPSERT (increment qty).
         constraints = [
             models.UniqueConstraint(
-                fields=['pharmacy', 'medicine', 'batch_number', 'mrp'],
+                fields=['pharmacy', 'medicine', 'batch_number', 'mrp', 'gst_percentage'],
                 name='unique_batch_mrp_per_pharmacy'
             )
         ]
