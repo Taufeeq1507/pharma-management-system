@@ -3,7 +3,7 @@ from rest_framework import viewsets, generics, status
 from rest_framework.response import Response
 from rest_framework.generics import get_object_or_404
 from accounts.permissions import IsClerkOrHigher, IsOwnerOrHigher
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 from .models import (
     Supplier, MedicineMaster, PurchaseBill,
     InventoryBatch, WarehouseBlock, ShelfLocation, StockAdjustment,
@@ -89,17 +89,22 @@ class MedicineSearchView(generics.ListAPIView):
         q = self.request.query_params.get('q', '').strip()
         if not q:
             return MedicineMaster.objects.none()
+        batches_qs = Prefetch(
+            'live_batches',
+            queryset=InventoryBatch.objects.filter(available_quantity__gt=0)
+        )
+        # Barcode scan: numeric 8-14 chars → exact match
+        if q.isdigit() and 8 <= len(q) <= 14:
+            return (
+                MedicineMaster.objects
+                .filter(barcode=q, is_active=True)
+                .prefetch_related(batches_qs)
+            )
+        # Text search: name or salt_name
         return (
             MedicineMaster.objects
-            .filter(name__icontains=q, is_active=True)
-            .prefetch_related(
-                Prefetch(
-                    'live_batches',
-                    queryset=InventoryBatch.objects.filter(
-                        available_quantity__gt=0
-                    )
-                )
-            )
+            .filter(Q(name__icontains=q) | Q(salt_name__icontains=q), is_active=True)
+            .prefetch_related(batches_qs)
         )
 
 

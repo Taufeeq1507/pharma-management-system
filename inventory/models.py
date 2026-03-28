@@ -31,8 +31,23 @@ class MedicineMaster(TenantModel):
     # Number of individual units per strip/pack — used to convert strips → individual unit count
     pack_qty = models.IntegerField(default=1)
     default_gst_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    # Salt / generic name including strength — e.g. "Paracetamol 650mg", "Amoxicillin + Clavulanic Acid 625mg"
+    # Not unique: multiple brands can share the same salt_name (Dolo, Crocin both = "Paracetamol 650mg")
+    salt_name = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    # EAN-13 or other barcode printed on the strip/box. Product-level identifier (not batch-level).
+    # Unique per pharmacy — enforced by constraint below, nulls excluded.
+    barcode = models.CharField(max_length=100, blank=True, null=True, db_index=True)
     # SOFT DELETE: If a drug is banned or discontinued, we set this to False.
     is_active = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['pharmacy', 'barcode'],
+                condition=models.Q(barcode__isnull=False),
+                name='unique_barcode_per_pharmacy'
+            )
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.company})"
