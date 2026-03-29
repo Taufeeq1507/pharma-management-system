@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.generics import get_object_or_404
 from accounts.permissions import IsClerkOrHigher, IsOwnerOrHigher
 from django.db.models import Prefetch, Q
+from django.utils import timezone
 from .models import (
     Supplier, MedicineMaster, PurchaseBill,
     InventoryBatch, WarehouseBlock, ShelfLocation, StockAdjustment,
@@ -94,7 +95,10 @@ class MedicineSearchView(generics.ListAPIView):
             return MedicineMaster.objects.none()
         batches_qs = Prefetch(
             'live_batches',
-            queryset=InventoryBatch.objects.filter(available_quantity__gt=0)
+            queryset=InventoryBatch.objects.filter(
+                available_quantity__gt=0,
+                expiry_date__gte=timezone.now().date()
+            )
         )
         active_filter = {} if include_inactive else {'is_active': True}
         # Barcode scan: numeric 8-14 chars → exact match
