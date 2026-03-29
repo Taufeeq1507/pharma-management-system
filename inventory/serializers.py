@@ -196,7 +196,7 @@ class MedicineSearchSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'company', 'category',
             'packaging', 'pack_qty', 'default_gst_percentage',
-            'salt_name', 'barcode', 'drug_schedule',
+            'salt_name', 'barcode', 'drug_schedule', 'is_active',
             'live_batches'
         ]
 
