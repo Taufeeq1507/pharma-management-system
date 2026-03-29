@@ -37,6 +37,16 @@ class MedicineMaster(TenantModel):
     # EAN-13 or other barcode printed on the strip/box. Product-level identifier (not batch-level).
     # Unique per pharmacy — enforced by constraint below, nulls excluded.
     barcode = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+    SCHEDULE_CHOICES = [
+        ('GENERAL',  'General'),
+        ('H',        'Schedule H'),
+        ('H1',       'Schedule H1'),
+        ('X',        'Schedule X'),
+        ('NARCOTIC', 'Narcotic'),
+    ]
+    drug_schedule = models.CharField(
+        max_length=20, choices=SCHEDULE_CHOICES, default='GENERAL'
+    )
     # SOFT DELETE: If a drug is banned or discontinued, we set this to False.
     is_active = models.BooleanField(default=True)
 

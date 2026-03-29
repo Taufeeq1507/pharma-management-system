@@ -24,6 +24,8 @@ class SalesBill(TenantModel):
     # --- 2. GUEST / WALK-IN DATA (EXISTING) ---
     customer_phone = models.CharField(max_length=15, blank=True, null=True, db_index=True)
     customer_name  = models.CharField(max_length=255, blank=True, null=True)
+    # Required when any item in the bill is a Narcotic — mandatory for inspection compliance
+    buyer_address  = models.CharField(max_length=500, blank=True, null=True)
 
     bill_date = models.DateTimeField(default=timezone.now)
     billed_by = models.ForeignKey(

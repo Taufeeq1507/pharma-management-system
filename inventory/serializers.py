@@ -167,15 +167,17 @@ class PurchaseBillSerializer(serializers.ModelSerializer):
 # ---------------------------------------------------------------------------
 
 class InventoryBatchSerializer(serializers.ModelSerializer):
-    medicine_name    = serializers.CharField(source='medicine.name',      read_only=True)
-    medicine_company = serializers.CharField(source='medicine.company',   read_only=True)
-    packaging        = serializers.CharField(source='medicine.packaging', read_only=True)  # ← ADD THIS
+    medicine_name    = serializers.CharField(source='medicine.name',          read_only=True)
+    medicine_company = serializers.CharField(source='medicine.company',       read_only=True)
+    packaging        = serializers.CharField(source='medicine.packaging',     read_only=True)
+    drug_schedule    = serializers.CharField(source='medicine.drug_schedule', read_only=True)
+    pack_qty         = serializers.IntegerField(source='medicine.pack_qty',   read_only=True)
 
     class Meta:
         model = InventoryBatch
         fields = [
             'id', 'medicine', 'medicine_name', 'medicine_company',
-            'packaging',                                                   # ← ADD THIS
+            'packaging', 'drug_schedule', 'pack_qty',
             'batch_number', 'expiry_date', 'available_quantity',
             'gst_percentage', 'mrp', 'shelf'
         ]
@@ -194,7 +196,7 @@ class MedicineSearchSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'company', 'category',
             'packaging', 'pack_qty', 'default_gst_percentage',
-            'salt_name', 'barcode',
+            'salt_name', 'barcode', 'drug_schedule',
             'live_batches'
         ]
 

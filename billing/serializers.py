@@ -3,9 +3,8 @@ from django.db import transaction
 from decimal import Decimal
 from .models import CustomerParty, PaymentReceipt, PaymentAllocation
 from .models import SalesBill, SalesItem, SalesReturn
-from inventory.models import InventoryBatch, PurchaseItem
-from accounts.utils import get_current_pharmacy
 from inventory.models import InventoryBatch, MedicineMaster
+from accounts.utils import get_current_pharmacy
 # ── Read serializers ───────────────────────────────────────────────────────────
 
 class SalesItemReadSerializer(serializers.ModelSerializer):
@@ -34,7 +33,7 @@ class SalesBillReadSerializer(serializers.ModelSerializer):
     class Meta:
         model  = SalesBill
         fields = [
-            'id', 'customer_phone', 'customer_name',
+            'id', 'customer_phone', 'customer_name', 'buyer_address',
             'bill_date', 'billed_by', 'billed_by_phone',
             'subtotal', 'total_tax', 'discount', 'grand_total',
             'payment_mode',
@@ -93,9 +92,10 @@ class CheckoutSerializer(serializers.Serializer):
     customer_id    = serializers.UUIDField(required=False, allow_null=True)
     customer_phone = serializers.CharField(max_length=15,  required=False, allow_blank=True)
     customer_name  = serializers.CharField(max_length=255, required=False, allow_blank=True)
-    
+    buyer_address  = serializers.CharField(max_length=500, required=False, allow_blank=True)
+
     # Obsolete fields removed: is_b2b, customer_gstin
-    
+
     discount       = serializers.DecimalField(
                          max_digits=10, decimal_places=2,
                          required=False, default=Decimal('0.00'))
@@ -112,6 +112,22 @@ class CheckoutSerializer(serializers.Serializer):
         # Strict B2B Rule: You cannot give credit to an unregistered guest
         if data.get('payment_mode') == 'CREDIT' and not data.get('customer_id'):
             raise serializers.ValidationError("Credit sales require a registered Customer/Patient profile.")
+
+        # Narcotic Rule: buyer name + address are legally mandatory
+        medicine_ids = [item['medicine'] for item in data.get('items', [])]
+        has_narcotic = MedicineMaster.objects.filter(
+            id__in=medicine_ids, drug_schedule='NARCOTIC'
+        ).exists()
+        if has_narcotic:
+            if not data.get('customer_name', '').strip():
+                raise serializers.ValidationError(
+                    "Customer name is required when selling Narcotic drugs."
+                )
+            if not data.get('buyer_address', '').strip():
+                raise serializers.ValidationError(
+                    "Buyer address is required when selling Narcotic drugs."
+                )
+
         return data
 
     @transaction.atomic
@@ -248,12 +264,16 @@ class CheckoutSerializer(serializers.Serializer):
                 "medicine_name":      batch.medicine.name,
                 "batch_number":       batch.batch_number,
                 "quantity":           qty,
-                "free_quantity":      free_qty, # Added to snapshot
+                "free_quantity":      free_qty,
                 "mrp_per_strip":      str(mrp_per_strip),
                 "sale_rate_per_unit": str(sale_rate_per_unit),
                 "discount_percentage":str(discount_pct),
                 "taxable_value":      str(line_base),
-                "gst_percentage":     str(gst_pct),     # Now dynamically legally accurate
+                "gst_percentage":     str(gst_pct),
+                "cgst_amount":        str(cgst_amt),
+                "sgst_amount":        str(sgst_amt),
+                "igst_amount":        str(igst_amt),
+                "drug_schedule":      batch.medicine.drug_schedule,
                 "line_total":         str(line_total),
             })
 
@@ -279,9 +299,10 @@ class CheckoutSerializer(serializers.Serializer):
         grand_total  = (subtotal + total_tax - discount).quantize(Decimal('0.01'))
 
         bill = SalesBill.objects.create(
-            customer       = customer_obj, # The strict ERP link
+            customer       = customer_obj,
             customer_phone = validated_data.get('customer_phone') or None,
             customer_name  = validated_data.get('customer_name')  or None,
+            buyer_address  = validated_data.get('buyer_address')  or None,
             billed_by      = request.user,
             subtotal       = subtotal.quantize(Decimal('0.01')),
             total_tax      = total_tax.quantize(Decimal('0.01')),
