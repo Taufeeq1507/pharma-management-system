@@ -41,6 +41,8 @@ class MedicineMasterViewSet(viewsets.ModelViewSet):
     permission_classes = [IsClerkOrHigher]
     http_method_names = ['get', 'post', 'put', 'patch']
     def get_queryset(self):
+        if self.request.query_params.get('include_inactive') == 'true':
+            return MedicineMaster.objects.all()
         return MedicineMaster.objects.filter(is_active=True)
 
 
@@ -87,23 +89,25 @@ class MedicineSearchView(generics.ListAPIView):
 
     def get_queryset(self):
         q = self.request.query_params.get('q', '').strip()
+        include_inactive = self.request.query_params.get('include_inactive') == 'true'
         if not q:
             return MedicineMaster.objects.none()
         batches_qs = Prefetch(
             'live_batches',
             queryset=InventoryBatch.objects.filter(available_quantity__gt=0)
         )
+        active_filter = {} if include_inactive else {'is_active': True}
         # Barcode scan: numeric 8-14 chars → exact match
         if q.isdigit() and 8 <= len(q) <= 14:
             return (
                 MedicineMaster.objects
-                .filter(barcode=q, is_active=True)
+                .filter(barcode=q, **active_filter)
                 .prefetch_related(batches_qs)
             )
         # Text search: name or salt_name
         return (
             MedicineMaster.objects
-            .filter(Q(name__icontains=q) | Q(salt_name__icontains=q), is_active=True)
+            .filter(Q(name__icontains=q) | Q(salt_name__icontains=q), **active_filter)
             .prefetch_related(batches_qs)
         )
 

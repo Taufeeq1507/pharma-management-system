@@ -263,6 +263,7 @@ class CheckoutSerializer(serializers.Serializer):
                 "medicine_id":        str(batch.medicine.id),
                 "medicine_name":      batch.medicine.name,
                 "batch_number":       batch.batch_number,
+                "expiry_date":        str(batch.expiry_date),
                 "quantity":           qty,
                 "free_quantity":      free_qty,
                 "mrp_per_strip":      str(mrp_per_strip),
