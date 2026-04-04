@@ -42,9 +42,11 @@ class MedicineMasterViewSet(viewsets.ModelViewSet):
     permission_classes = [IsClerkOrHigher]
     http_method_names = ['get', 'post', 'put', 'patch']
     def get_queryset(self):
-        if self.request.query_params.get('include_inactive') == 'true':
-            return MedicineMaster.objects.all()
-        return MedicineMaster.objects.filter(is_active=True)
+        if self.action == 'list':
+            if self.request.query_params.get('include_inactive') == 'true':
+                return MedicineMaster.objects.all()
+            return MedicineMaster.objects.filter(is_active=True)
+        return MedicineMaster.objects.all()
 
 
 # ---------------------------------------------------------------------------
