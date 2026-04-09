@@ -41,8 +41,9 @@ class SalesBill(TenantModel):
     discount    = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     grand_total = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
 
-    PAYMENT_CHOICES = [('CASH', 'Cash'), ('UPI', 'UPI'), ('CREDIT', 'Credit')]
+    PAYMENT_CHOICES = [('CASH', 'Cash'), ('UPI', 'UPI'), ('CREDIT', 'Credit'), ('SPLIT', 'Split')]
     payment_mode = models.CharField(max_length=20, choices=PAYMENT_CHOICES, default='CASH')
+    split_payments = models.JSONField(default=dict, blank=True)
 
     # --- 4. INVOICE PAYMENT TRACKING (NEW ERP FIELDS) ---
     # Tracks how much has been cleared via the PaymentReceipt + PaymentAllocation tables
@@ -117,8 +118,8 @@ class SalesReturn(TenantModel):
     across multiple separate return requests.
     Validation checks: already_returned + new_qty <= original_qty
     """
-    sales_bill = models.ForeignKey(SalesBill, on_delete=models.PROTECT, related_name='returns')
-    sales_item = models.ForeignKey(SalesItem, on_delete=models.PROTECT, related_name='returns')
+    sales_bill = models.ForeignKey(SalesBill, on_delete=models.PROTECT, related_name='returns', null=True, blank=True)
+    sales_item = models.ForeignKey(SalesItem, on_delete=models.PROTECT, related_name='returns', null=True, blank=True)
 
     return_quantity = models.IntegerField()
     refund_amount   = models.DecimalField(max_digits=10, decimal_places=2)

@@ -524,12 +524,34 @@ class StockSyncSerializer(serializers.Serializer):
                 if actual_quantity == batch.available_quantity:
                     continue  # No change — skip silently
 
+                delta = actual_quantity - batch.available_quantity
+                
+                # Financial Intelligence: Calculate ITC Reversal using latest purchase rate
+                from .models import PurchaseItem
+                latest_purchase = PurchaseItem.objects.filter(
+                    medicine=batch.medicine, batch_number=batch.batch_number
+                ).order_by('-purchase_bill__bill_date').first()
+                
+                purchase_rate = latest_purchase.purchase_rate_base if latest_purchase else Decimal('0.00')
+                
+                # delta is in tablets. purchase_rate is per strip.
+                pack_qty = Decimal(str(batch.medicine.pack_qty))
+                adjusted_strips = Decimal(str(abs(delta))) / pack_qty
+                
+                adjustment_value = (adjusted_strips * purchase_rate).quantize(Decimal('0.01'))
+                
+                # Only calculate tax reversal on negative delta (shrinkage/loss), or track both optionally. We track both.
+                tax_reversal_amount = (adjustment_value * (batch.gst_percentage / Decimal('100'))).quantize(Decimal('0.01'))
+
                 StockAdjustment.objects.create(
                     inventory_batch = batch,
                     shelf           = self._shelf,
                     old_quantity    = batch.available_quantity,
                     new_quantity    = actual_quantity,
-                    delta           = actual_quantity - batch.available_quantity,
+                    delta           = delta,
+                    purchase_rate   = purchase_rate,
+                    adjustment_value = adjustment_value,
+                    tax_reversal_amount = tax_reversal_amount,
                     adjusted_by     = request.user,
                     reason          = "Weekly Sync",
                     source          = 'SYNC',

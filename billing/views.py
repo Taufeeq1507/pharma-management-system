@@ -1,13 +1,16 @@
 from rest_framework import generics, status
 from rest_framework.response import Response
 from accounts.permissions import IsClerkOrHigher, IsOwnerOrHigher
-from .models import SalesBill, SalesReturn
+from .models import SalesBill, SalesReturn, CustomerParty
 from .serializers import (
     CheckoutSerializer,
     SalesBillReadSerializer,
     SalesReturnSerializer,
     SalesReturnReadSerializer,
+    CustomerPartySerializer,
+    PaymentReceiptSerializer,
 )
+from django.db.models import Q
 
 
 import traceback
@@ -122,3 +125,30 @@ class SalesReturnView(generics.CreateAPIView):
             SalesReturnReadSerializer(sales_return).data,
             status=status.HTTP_201_CREATED
         )
+
+class CustomerPartyListView(generics.ListAPIView):
+    """
+    GET /api/billing/customers/?q=987
+    Filters customers by phone or name to power the POS Autocomplete.
+    """
+    serializer_class = CustomerPartySerializer
+    permission_classes = [IsClerkOrHigher]
+
+    def get_queryset(self):
+        qs = CustomerParty.objects.all()
+        has_balance = self.request.query_params.get('has_balance')
+        if has_balance == 'true':
+            qs = qs.filter(outstanding_balance__gt=0)
+            
+        q = self.request.query_params.get('search', '').strip()
+        if q:
+            qs = qs.filter(Q(phone__icontains=q) | Q(name__icontains=q))
+        return qs[:50] if has_balance == 'true' else qs[:10]
+
+class PaymentReceiptView(generics.CreateAPIView):
+    """
+    POST /api/billing/receipt/
+    Logs a payment from a B2B customer and triggers FIFO auto-allocation.
+    """
+    serializer_class = PaymentReceiptSerializer
+    permission_classes = [IsClerkOrHigher]

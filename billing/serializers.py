@@ -58,13 +58,19 @@ class SalesReturnReadSerializer(serializers.ModelSerializer):
 
 # Ensure you import CustomerParty along with your other models
 # from billing.models import SalesBill, SalesItem, CustomerParty 
-# from inventory.models import InventoryBatch, MedicineMaster, PurchaseItem
+
+class CustomerPartySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomerParty
+        fields = '__all__'
+        read_only_fields = ['id', 'pharmacy']
 
 class CheckoutItemInputSerializer(serializers.Serializer):
     """One medicine line in the POS payload."""
     medicine = serializers.UUIDField()
-    quantity = serializers.IntegerField(min_value=0) # Billed tablets
-    free_quantity = serializers.IntegerField(min_value=0, default=0) # Free tablets (Buy X Get Y)
+    quantity = serializers.IntegerField() # Billed units
+    uom = serializers.ChoiceField(choices=['Tabs', 'Strips'], default='Tabs')
+    free_quantity = serializers.IntegerField(min_value=0, default=0) # Free units
     discount_percentage = serializers.DecimalField(
         max_digits=5, decimal_places=2, required=False, default=Decimal('0.00')
     )
@@ -100,7 +106,10 @@ class CheckoutSerializer(serializers.Serializer):
                          max_digits=10, decimal_places=2,
                          required=False, default=Decimal('0.00'))
     payment_mode   = serializers.ChoiceField(
-                         choices=['CASH', 'UPI', 'CREDIT'], default='CASH')
+                         choices=['CASH', 'UPI', 'CREDIT', 'SPLIT'], default='CASH')
+    split_payments = serializers.DictField(
+                         child=serializers.DecimalField(max_digits=10, decimal_places=2),
+                         required=False, default=dict)
     items          = CheckoutItemInputSerializer(many=True)
 
     def validate_items(self, value):
@@ -113,8 +122,57 @@ class CheckoutSerializer(serializers.Serializer):
         if data.get('payment_mode') == 'CREDIT' and not data.get('customer_id'):
             raise serializers.ValidationError("Credit sales require a registered Customer/Patient profile.")
 
+        items = data.get('items', [])
+        negative_items = [item for item in items if item.get('quantity', 0) < 0]
+
+        if negative_items:
+            # THE B2B BAN
+            payment_mode = data.get('payment_mode')
+            customer_id = data.get('customer_id')
+            is_b2b_customer = False
+            
+            if customer_id:
+                try:
+                    cust = CustomerParty.objects.get(id=customer_id)
+                    is_b2b_customer = (cust.customer_type == 'B2B')
+                except CustomerParty.DoesNotExist:
+                    pass
+            
+            split_payments = data.get('split_payments', {})
+            uses_credit = payment_mode == 'CREDIT' or (payment_mode == 'SPLIT' and Decimal(str(split_payments.get('CREDIT', '0.00'))) > 0)
+            if uses_credit or is_b2b_customer:
+                raise serializers.ValidationError("B2B and Credit returns must be processed via the formal Sales Return menu linked to the original invoice.")
+
+            # THE THRESHOLD
+            total_negative_value = Decimal('0.00')
+            for item in negative_items:
+                medicine_id = item['medicine']
+                qty = item['quantity']
+                discount_pct = item.get('discount_percentage', Decimal('0.00'))
+                
+                batch = InventoryBatch.objects.filter(medicine_id=medicine_id, medicine__is_active=True).first()
+                if not batch:
+                    raise serializers.ValidationError(f"Cannot process return: no batch found for medicine {medicine_id}")
+                
+                pack_qty = batch.medicine.pack_qty or 1
+                gst_pct = batch.medicine.default_gst_percentage
+                
+                mrp_inclusive_rate = batch.mrp / Decimal(pack_qty)
+                sale_rate = (mrp_inclusive_rate / (Decimal('1') + (gst_pct / Decimal('100')))).quantize(Decimal('0.0001'))
+                
+                abs_qty = abs(qty)
+                gross = (sale_rate * abs_qty).quantize(Decimal('0.01'))
+                discount = (gross * discount_pct / Decimal('100')).quantize(Decimal('0.01'))
+                base = gross - discount
+                
+                tax = (base * gst_pct / Decimal('100')).quantize(Decimal('0.01'))
+                total_negative_value += (base + tax)
+                
+            if total_negative_value > Decimal('500.00'):
+                raise serializers.ValidationError("Unlinked returns cannot exceed ₹500. Please link this to the original bill via the Returns menu.")
+
         # Narcotic Rule: buyer name + address are legally mandatory
-        medicine_ids = [item['medicine'] for item in data.get('items', [])]
+        medicine_ids = [item['medicine'] for item in items]
         has_narcotic = MedicineMaster.objects.filter(
             id__in=medicine_ids, drug_schedule='NARCOTIC'
         ).exists()
@@ -136,6 +194,7 @@ class CheckoutSerializer(serializers.Serializer):
         items          = validated_data.pop('items')
         discount       = validated_data.get('discount', Decimal('0.00'))
         customer_id    = validated_data.get('customer_id')
+        split_payments = validated_data.get('split_payments', {})
 
         # ── Step 0: Fetch Customer & Determine Interstate Logic ───────────────
         pharmacy = request.user.pharmacy # Assuming get_current_pharmacy() equivalent
@@ -155,12 +214,37 @@ class CheckoutSerializer(serializers.Serializer):
 
         for item in items:
             medicine_id   = item['medicine']
-            qty_needed    = item['quantity']
-            free_needed   = item['free_quantity']
+            uom           = item.get('uom', 'Tabs')
+            raw_qty       = item['quantity']
+            raw_free_qty  = item['free_quantity']
             discount_pct  = item.get('discount_percentage', Decimal('0.00'))
+            
+            medicine_obj = MedicineMaster.objects.get(id=medicine_id)
+            pack_qty = medicine_obj.pack_qty or 1
+            
+            if uom == 'Strips':
+                qty_needed = raw_qty * pack_qty
+                free_needed = raw_free_qty * pack_qty
+            else:
+                qty_needed = raw_qty
+                free_needed = raw_free_qty
             
             qty_remaining  = qty_needed
             free_remaining = free_needed
+
+            if qty_needed < 0:
+                # ── Same-Window Exchange/Return Logic ──
+                return_batch = InventoryBatch.objects.select_for_update().filter(
+                    medicine_id=medicine_id,
+                    medicine__is_active=True
+                ).order_by('expiry_date').first()
+
+                if not return_batch:
+                    errors[str(medicine_id)] = "Cannot return: No batch found in stock to absorb return."
+                    continue
+                
+                deduction_plan.append((return_batch, qty_needed, 0, discount_pct, uom, pack_qty))
+                continue
 
             batches = list(
                 InventoryBatch.objects
@@ -193,7 +277,7 @@ class CheckoutSerializer(serializers.Serializer):
                 batch.available_quantity -= deduct_free
 
                 if deduct_qty > 0 or deduct_free > 0:
-                    deduction_plan.append((batch, deduct_qty, deduct_free, discount_pct))
+                    deduction_plan.append((batch, deduct_qty, deduct_free, discount_pct, uom, pack_qty))
 
             if qty_remaining > 0 or free_remaining > 0:
                 errors[str(medicine_id)] = (
@@ -213,17 +297,17 @@ class CheckoutSerializer(serializers.Serializer):
         total_sgst            = Decimal('0.00')
         total_igst            = Decimal('0.00')
 
-        for batch, qty, free_qty, discount_pct in deduction_plan:
-            pack_qty           = batch.medicine.pack_qty or 1
+        for batch, qty, free_qty, discount_pct, uom, pack_qty in deduction_plan:
             mrp_per_strip      = batch.mrp
             
             # The Law Change: Tax MUST come from the active Medicine Master, not the historical batch
             gst_pct            = batch.medicine.default_gst_percentage 
 
             # Financial math STRICTLY uses `qty` (billed), completely ignoring `free_qty`
-            if qty > 0:
-                sale_rate_per_unit = (mrp_per_strip / Decimal(pack_qty)).quantize(Decimal('0.0001'))
-                line_gross = (sale_rate_per_unit * qty).quantize(Decimal('0.01'))
+            if qty != 0:
+                mrp_inclusive_rate = mrp_per_strip / Decimal(str(pack_qty))
+                sale_rate_per_unit = (mrp_inclusive_rate / (Decimal('1') + (gst_pct / Decimal('100')))).quantize(Decimal('0.0001'))
+                line_gross = (sale_rate_per_unit * Decimal(str(qty))).quantize(Decimal('0.01'))
                 line_discount = (line_gross * discount_pct / Decimal('100')).quantize(Decimal('0.01'))
                 line_base  = line_gross - line_discount
                 line_tax   = (line_base * gst_pct / Decimal('100')).quantize(Decimal('0.01'))
@@ -253,19 +337,41 @@ class CheckoutSerializer(serializers.Serializer):
 
             # Deduct from shelf (batch is already locked via select_for_update)
             # We deduct BOTH billed and free quantities
+            old_qty = batch.available_quantity
             batch.available_quantity -= (qty + free_qty)
             batch.save()
 
+            if qty < 0:
+                from .models import SalesReturn
+                SalesReturn.objects.create(
+                    sales_bill=None,
+                    sales_item=None,
+                    return_quantity=abs(qty),
+                    refund_amount=abs(line_total),
+                    reason='Same-Window POS Exchange'
+                )
+
             # ... (Keep your existing Supplier Info query logic here) ...
             supplier_name, supplier_gstin, supplier_invoice = None, None, None # Placeholder for brevity
+
+            if uom == 'Strips':
+                snap_qty = float(qty) / float(pack_qty)
+                if snap_qty.is_integer(): snap_qty = int(snap_qty)
+                
+                snap_free = float(free_qty) / float(pack_qty)
+                if snap_free.is_integer(): snap_free = int(snap_free)
+            else:
+                snap_qty = qty
+                snap_free = free_qty
 
             items_snapshot.append({
                 "medicine_id":        str(batch.medicine.id),
                 "medicine_name":      batch.medicine.name,
                 "batch_number":       batch.batch_number,
                 "expiry_date":        str(batch.expiry_date),
-                "quantity":           qty,
-                "free_quantity":      free_qty,
+                "quantity":           snap_qty,
+                "uom":                uom,
+                "free_quantity":      snap_free,
                 "mrp_per_strip":      str(mrp_per_strip),
                 "sale_rate_per_unit": str(sale_rate_per_unit),
                 "discount_percentage":str(discount_pct),
@@ -299,6 +405,11 @@ class CheckoutSerializer(serializers.Serializer):
         payment_mode = validated_data.get('payment_mode', 'CASH')
         grand_total  = (subtotal + total_tax - discount).quantize(Decimal('0.01'))
 
+        if payment_mode == 'SPLIT':
+            split_sum = sum((Decimal(str(v)) for v in split_payments.values()), Decimal('0.00'))
+            if split_sum != grand_total:
+                raise serializers.ValidationError({"split_payments": f"Split payments total (₹{split_sum}) must exactly equal the grand total (₹{grand_total})."})
+
         bill = SalesBill.objects.create(
             customer       = customer_obj,
             customer_phone = validated_data.get('customer_phone') or None,
@@ -314,6 +425,7 @@ class CheckoutSerializer(serializers.Serializer):
             grand_total    = grand_total,
             items_snapshot = items_snapshot,
             payment_mode   = payment_mode,
+            split_payments = split_payments,
             # payment_status defaults to 'UNPAID' implicitly 
         )
 
@@ -324,11 +436,31 @@ class CheckoutSerializer(serializers.Serializer):
         ])
 
         # ── Step 5: Update the Ledger for Credit Sales (NEW) ──────────────────
-        if payment_mode == 'CREDIT' and customer_obj:
+        credit_amount = Decimal('0.00')
+        if payment_mode == 'CREDIT':
+            credit_amount = grand_total
+        elif payment_mode == 'SPLIT':
+            credit_amount = Decimal(str(split_payments.get('CREDIT', '0.00')))
+        
+        if credit_amount > 0 and customer_obj:
             # Re-fetch customer under a strict database lock to prevent race conditions
             locked_customer = CustomerParty.objects.select_for_update().get(id=customer_obj.id)
-            locked_customer.outstanding_balance += grand_total
+            locked_customer.outstanding_balance += credit_amount
             locked_customer.save()
+            
+        if payment_mode == 'SPLIT':
+            if credit_amount > 0 and credit_amount < grand_total:
+                bill.payment_status = 'PARTIAL'
+                bill.amount_paid = grand_total - credit_amount
+                bill.save(update_fields=['payment_status', 'amount_paid'])
+            elif credit_amount == 0:
+                bill.payment_status = 'PAID'
+                bill.amount_paid = grand_total
+                bill.save(update_fields=['payment_status', 'amount_paid'])
+        elif payment_mode in ['CASH', 'UPI']:
+            bill.payment_status = 'PAID'
+            bill.amount_paid = grand_total
+            bill.save(update_fields=['payment_status', 'amount_paid'])
 
         return bill
 
@@ -394,6 +526,16 @@ class SalesReturnSerializer(serializers.ModelSerializer):
         batch = InventoryBatch.objects.select_for_update().get(pk=self._batch.pk)
         batch.available_quantity += validated_data['return_quantity']
         batch.save()
+
+        # New Logic: Deduct the refund from customer's outstanding balance if it was a credit transaction
+        sales_bill = validated_data['sales_bill']
+        refund_amount = validated_data['refund_amount']
+
+        if refund_amount > Decimal('0.00') and sales_bill.payment_mode in ['CREDIT', 'SPLIT']:
+            if sales_bill.customer:
+                locked_customer = CustomerParty.objects.select_for_update().get(id=sales_bill.customer.id)
+                locked_customer.outstanding_balance -= refund_amount
+                locked_customer.save()
 
         return SalesReturn.objects.create(**validated_data)
 
