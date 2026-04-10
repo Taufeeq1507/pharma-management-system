@@ -313,7 +313,6 @@ class GSTReportView(APIView):
             })
 
         # ── B2C consolidated by GST rate (for GSTR-1 Table 7) ───────────────
-        from inventory.models import SalesItem as _SI  # avoid clash
         from .models import SalesItem
         b2c_items = SalesItem.objects.filter(
             sales_bill__bill_date__date__gte=date_from,
