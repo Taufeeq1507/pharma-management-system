@@ -146,9 +146,9 @@ class PurchaseBillSerializer(serializers.ModelSerializer):
                 batch, created = InventoryBatch.objects.get_or_create(
                     medicine=item_data['medicine'],
                     batch_number=item_data['batch_number'],
+                    mrp=item_data['mrp'],
+                    gst_percentage=item_data['gst_percentage'],
                     defaults={
-                        'mrp':                item_data['mrp'],
-                        'gst_percentage':     item_data['gst_percentage'],
                         'expiry_date':        item_data['expiry_date'],
                         'available_quantity': total_units,
                         'purchase_rate':      per_tablet_rate,
@@ -157,10 +157,7 @@ class PurchaseBillSerializer(serializers.ModelSerializer):
 
                 if not created:
                     batch.available_quantity += total_units
-                    # Update MRP, GST% and purchase_rate to the latest values from this invoice
-                    batch.mrp            = item_data['mrp']
-                    batch.gst_percentage = item_data['gst_percentage']
-                    batch.purchase_rate  = per_tablet_rate
+                    batch.purchase_rate = per_tablet_rate
                     batch.save()
 
             bill.subtotal    = running_subtotal

@@ -301,7 +301,7 @@ class CheckoutSerializer(serializers.Serializer):
                     available_quantity__gt=0,
                     medicine__is_active=True,
                 )
-                .order_by('expiry_date')
+                .order_by('expiry_date', 'mrp')
             )
 
             if not batches and (qty_needed > 0 or free_needed > 0):

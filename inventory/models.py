@@ -233,8 +233,9 @@ class InventoryBatch(TenantModel):
     )
 
     class Meta:
-        # Safety: Prevents a duplicate row for the same batch + MRP combo within a pharmacy.
-        # When a second invoice arrives with the same batch/MRP, we UPSERT (increment qty).
+        # Safety: Prevents a duplicate row for the same batch + MRP + GST% combo within a pharmacy.
+        # Same batch number can exist with different MRP/GST% (e.g. price revision mid-batch)
+        # and each combination is tracked separately for shelf management.
         constraints = [
             models.UniqueConstraint(
                 fields=['pharmacy', 'medicine', 'batch_number', 'mrp', 'gst_percentage'],
