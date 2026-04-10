@@ -72,9 +72,17 @@ class Pharmacy(models.Model):
     name = models.CharField(max_length=255)
     gstin = models.CharField(max_length=15, unique=True, null=True, blank=True)
     state = models.CharField(max_length=100, default="Maharashtra", help_text="Used for CGST/SGST vs IGST calculation")
+    address = models.TextField(blank=True, null=True, help_text="Full address — appears on GST invoices")
     drug_license_no = models.CharField(max_length=100, unique=True, null=True, blank=True)
     subscription_plan = models.CharField(max_length=50, default="Tier 2")
     settings = models.JSONField(default=dict, blank=True)
+    # Sequential GST invoice counter — incremented on every sale, reset each new FY
+    invoice_counter = models.IntegerField(default=0)
+    # Sequential credit-note counter — incremented on every sales return, reset each new FY
+    cn_counter = models.IntegerField(default=0)
+    # Tracks the active Financial Year label (e.g. "2025-26") so we can detect FY
+    # rollover and auto-reset both counters on the first transaction of the new year.
+    current_fy = models.CharField(max_length=10, default='', blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

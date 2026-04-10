@@ -47,6 +47,19 @@ class MedicineMaster(TenantModel):
     drug_schedule = models.CharField(
         max_length=20, choices=SCHEDULE_CHOICES, default='GENERAL'
     )
+    # GST UQC (Unit Quantity Code) — required for GSTR-1 HSN Summary Table 12
+    UQC_CHOICES = [
+        ('TAB', 'Tablets'),   ('CAP', 'Capsules'),  ('BOT', 'Bottles'),
+        ('AMP', 'Ampoules'),  ('VIA', 'Vials'),     ('TUB', 'Tubes'),
+        ('SYR', 'Syringes'),  ('PKT', 'Packets'),   ('BOX', 'Box/Carton'),
+        ('GM',  'Grams'),     ('KG',  'Kilograms'), ('ML',  'Milliliters'),
+        ('LTR', 'Liters'),    ('PAC', 'Packs'),     ('NOS', 'Numbers'),
+        ('OTH', 'Others'),
+    ]
+    uqc = models.CharField(
+        max_length=5, choices=UQC_CHOICES, default='TAB',
+        help_text="Unit Quantity Code for GSTR-1 HSN Summary (Table 12)"
+    )
     # SOFT DELETE: If a drug is banned or discontinued, we set this to False.
     is_active = models.BooleanField(default=True)
 
@@ -201,6 +214,15 @@ class InventoryBatch(TenantModel):
     # MRP of the FULL STRIP/PACK — needed on the billing screen
     mrp = models.DecimalField(max_digits=10, decimal_places=2)
 
+    # Latest purchase cost per individual tablet (pre-GST).
+    # Populated / updated on every inward purchase — used for COGS, P&L, and
+    # GSTR-3B ITC reversal calculations. Per-tablet (not per-strip) for
+    # consistency with available_quantity which is also in tablets.
+    purchase_rate = models.DecimalField(
+        max_digits=10, decimal_places=4, default=Decimal('0.0000'),
+        help_text="Latest purchase rate per tablet pre-GST — for COGS and ITC calculation"
+    )
+
     # WHERE this batch lives on the shelf. None = not yet assigned (pending placement).
     shelf = models.ForeignKey(
         'ShelfLocation',
@@ -254,6 +276,13 @@ class StockAdjustment(TenantModel):
     reason        = models.CharField(max_length=255, default="Weekly Sync")
     source        = models.CharField(max_length=20, choices=SOURCE_CHOICES, default='SYNC')
 
+    # --- CGST/SGST/IGST split of tax_reversal_amount ---
+    # Needed to correctly populate GSTR-3B Table 4(B)(2) ITC reversal (Section 17(5)(h))
+    # Split is derived at adjustment time from the original purchase batch's supplier state
+    cgst_reversal = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    sgst_reversal = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    igst_reversal = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+
     def __str__(self):
         return f"Adjustment {self.delta:+d} on {self.inventory_batch}"
 
@@ -273,6 +302,17 @@ class PurchaseReturn(TenantModel):
     return_date = models.DateField(default=timezone.now)
 
     reason = models.CharField(max_length=255, default="Expired")  # e.g., Expired, Damaged, Recall
+
+    # --- GST compliance for GSTR-3B ITC reversal ---
+    # When supplier issues a credit note: report in GSTR-3B Table 4(B)(1)
+    # When no credit note: treat as fresh outward supply in GSTR-1
+    has_credit_note         = models.BooleanField(default=False,
+                                help_text="True if supplier issued a formal GST credit note")
+    supplier_credit_note_no = models.CharField(max_length=100, blank=True, null=True,
+                                help_text="Credit note number issued by the supplier")
+    cgst_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    sgst_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    igst_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
 
     def __str__(self):
         return f"Return {self.medicine.name} ({self.return_quantity}) to {self.supplier.name}"

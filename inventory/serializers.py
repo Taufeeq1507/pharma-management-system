@@ -132,23 +132,35 @@ class PurchaseBillSerializer(serializers.ModelSerializer):
                 running_igst     += igst_amt
 
                 # STOCK UPDATE: convert strips → tablets via pack_qty
-                pack_qty    = item_data['medicine'].pack_qty
+                pack_qty    = item_data['medicine'].pack_qty or 1
                 total_units = (qty + free_qty) * pack_qty
 
+                # BUG-I: store per-tablet purchase rate (pre-GST, pre-discount gross rate)
+                # Used for COGS reporting and GSTR-3B ITC reversal calculations.
+                per_tablet_rate = (item_data['purchase_rate_base'] / Decimal(str(pack_qty))).quantize(Decimal('0.0001'))
+
+                # Lookup by (medicine, batch_number) only — MRP and GST% are NOT
+                # part of the identity key. Including them caused a duplicate batch
+                # row whenever a supplier revised the MRP on the same physical batch,
+                # resulting in two separate stock entries for the same physical stock.
                 batch, created = InventoryBatch.objects.get_or_create(
                     medicine=item_data['medicine'],
                     batch_number=item_data['batch_number'],
-                    mrp=item_data['mrp'],
-                    gst_percentage=item_data['gst_percentage'],
                     defaults={
+                        'mrp':                item_data['mrp'],
+                        'gst_percentage':     item_data['gst_percentage'],
                         'expiry_date':        item_data['expiry_date'],
                         'available_quantity': total_units,
-                        
+                        'purchase_rate':      per_tablet_rate,
                     }
                 )
 
                 if not created:
                     batch.available_quantity += total_units
+                    # Update MRP, GST% and purchase_rate to the latest values from this invoice
+                    batch.mrp            = item_data['mrp']
+                    batch.gst_percentage = item_data['gst_percentage']
+                    batch.purchase_rate  = per_tablet_rate
                     batch.save()
 
             bill.subtotal    = running_subtotal
@@ -218,11 +230,16 @@ class PurchaseReturnSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'supplier', 'original_bill',
             'inventory_batch',
-            'medicine','medicine_name',
+            'medicine', 'medicine_name',
             'batch_number', 'mrp',
-            'return_quantity', 'refund_amount', 'return_date', 'reason'
+            'return_quantity', 'refund_amount', 'return_date', 'reason',
+            'has_credit_note', 'supplier_credit_note_no',
+            'cgst_amount', 'sgst_amount', 'igst_amount',
         ]
-        read_only_fields = ['id', 'pharmacy', 'medicine_name', 'batch_number', 'mrp']
+        read_only_fields = [
+            'id', 'pharmacy', 'medicine_name', 'batch_number', 'mrp',
+            'cgst_amount', 'sgst_amount', 'igst_amount',
+        ]
 
     def validate(self, data):
         batch      = data['inventory_batch']
@@ -247,16 +264,52 @@ class PurchaseReturnSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        batch = validated_data.pop('inventory_batch')
-
+        validated_data.pop('inventory_batch')  # use self._batch with lock below
         with transaction.atomic():
+            # Re-fetch with a lock to prevent concurrent returns from reading
+            # the same stale available_quantity and producing a wrong final count.
+            batch = InventoryBatch.objects.select_for_update().get(pk=self._batch.pk)
             batch.available_quantity -= validated_data['return_quantity']
             batch.save()
+
+            # BUG-F: compute CGST/SGST/IGST split for GSTR-3B Table 4(B)(1) ITC reversal.
+            # Derive taxable value from refund_amount using the batch's GST rate,
+            # then split based on whether the original supplier is in the same state.
+            refund_amount = validated_data['refund_amount']
+            cgst_amount = sgst_amount = igst_amount = Decimal('0.00')
+
+            if refund_amount > Decimal('0.00') and batch.gst_percentage > 0:
+                gst_pct  = batch.gst_percentage
+                taxable  = (refund_amount / (1 + gst_pct / Decimal('100'))).quantize(Decimal('0.01'))
+                tax      = refund_amount - taxable
+
+                # Determine intra vs inter-state from most recent purchase for this batch
+                latest_pi = PurchaseItem.objects.filter(
+                    medicine=batch.medicine,
+                    batch_number=batch.batch_number,
+                ).select_related('purchase_bill__supplier').order_by('-purchase_bill__bill_date').first()
+
+                pharmacy  = get_current_pharmacy()
+                is_inter  = (
+                    latest_pi is not None
+                    and pharmacy is not None
+                    and latest_pi.purchase_bill.supplier.state.strip().lower()
+                        != pharmacy.state.strip().lower()
+                )
+
+                if is_inter:
+                    igst_amount = tax
+                else:
+                    cgst_amount = (tax / Decimal('2')).quantize(Decimal('0.01'))
+                    sgst_amount = tax - cgst_amount  # absorbs rounding penny
 
             return PurchaseReturn.objects.create(
                 medicine     = batch.medicine,
                 batch_number = batch.batch_number,
                 mrp          = batch.mrp,
+                cgst_amount  = cgst_amount,
+                sgst_amount  = sgst_amount,
+                igst_amount  = igst_amount,
                 **validated_data
             )
 
@@ -540,21 +593,46 @@ class StockSyncSerializer(serializers.Serializer):
                 
                 adjustment_value = (adjusted_strips * purchase_rate).quantize(Decimal('0.01'))
                 
-                # Only calculate tax reversal on negative delta (shrinkage/loss), or track both optionally. We track both.
+                # Tax reversal applies to negative delta (shrinkage/write-off) for GSTR-3B 4(B)(2).
+                # Positive deltas (found stock) don't require a reversal entry.
                 tax_reversal_amount = (adjustment_value * (batch.gst_percentage / Decimal('100'))).quantize(Decimal('0.01'))
 
+                # Determine intra vs inter-state to correctly split tax into CGST+SGST or IGST.
+                # Look up the most recent purchase to find the supplier's state.
+                cgst_reversal = Decimal('0.00')
+                sgst_reversal = Decimal('0.00')
+                igst_reversal = Decimal('0.00')
+                if tax_reversal_amount > Decimal('0.00'):
+                    pharmacy = get_current_pharmacy()
+                    latest_pi = PurchaseItem.objects.filter(
+                        medicine=batch.medicine, batch_number=batch.batch_number
+                    ).select_related('purchase_bill__supplier').order_by('-purchase_bill__bill_date').first()
+                    is_inter = (
+                        latest_pi and
+                        pharmacy and
+                        latest_pi.purchase_bill.supplier.state.strip().lower() != pharmacy.state.strip().lower()
+                    )
+                    if is_inter:
+                        igst_reversal = tax_reversal_amount
+                    else:
+                        cgst_reversal = (tax_reversal_amount / Decimal('2')).quantize(Decimal('0.01'))
+                        sgst_reversal = tax_reversal_amount - cgst_reversal  # absorbs rounding
+
                 StockAdjustment.objects.create(
-                    inventory_batch = batch,
-                    shelf           = self._shelf,
-                    old_quantity    = batch.available_quantity,
-                    new_quantity    = actual_quantity,
-                    delta           = delta,
-                    purchase_rate   = purchase_rate,
-                    adjustment_value = adjustment_value,
+                    inventory_batch     = batch,
+                    shelf               = self._shelf,
+                    old_quantity        = batch.available_quantity,
+                    new_quantity        = actual_quantity,
+                    delta               = delta,
+                    purchase_rate       = purchase_rate,
+                    adjustment_value    = adjustment_value,
                     tax_reversal_amount = tax_reversal_amount,
-                    adjusted_by     = request.user,
-                    reason          = "Weekly Sync",
-                    source          = 'SYNC',
+                    cgst_reversal       = cgst_reversal,
+                    sgst_reversal       = sgst_reversal,
+                    igst_reversal       = igst_reversal,
+                    adjusted_by         = request.user,
+                    reason              = "Weekly Sync",
+                    source              = 'SYNC',
                 )
                 adjustments.append(True)
 
