@@ -337,9 +337,10 @@ class CheckoutSerializer(serializers.Serializer):
         # distribute the bill-level discount in the next step.
         item_pass1 = []
         for batch, qty, free_qty, discount_pct, uom, pack_qty in deduction_plan:
-            # BUG-S1 FIX: use the batch's actual GST% (from purchase invoice),
-            # not the medicine master default which may have been updated since.
-            gst_pct      = batch.gst_percentage
+            # GST rate comes from the medicine master (not the batch) so that
+            # a government-mandated rate change propagated via the global medicine
+            # master automatically applies to all future sales of existing stock.
+            gst_pct      = batch.medicine.default_gst_percentage
             mrp_per_strip = batch.mrp
 
             if qty != 0:
