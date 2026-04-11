@@ -23,6 +23,7 @@ class SalesItemReadSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'medicine', 'medicine_name', 'inventory_batch',
             'batch_number', 'quantity', 'free_quantity',
+            'hsn_code', 'uqc', 'discount_percentage',
             'mrp_per_strip', 'sale_rate_per_unit', 'gst_percentage',
             'taxable_value', 'cgst_amount', 'sgst_amount', 'igst_amount',
             'line_total',
@@ -123,6 +124,18 @@ class CheckoutSerializer(serializers.Serializer):
     def validate_items(self, value):
         if not value:
             raise serializers.ValidationError("A sale must have at least one item.")
+        return value
+
+    def validate_split_payments(self, value):
+        # BUG-N2 FIX: reject unknown payment mode keys so no garbage data
+        # ends up in BillPaymentLine or the cash book.
+        allowed = {'CASH', 'UPI', 'CREDIT', 'CARD', 'CHEQUE', 'BANK_TRANSFER'}
+        unknown = set(value.keys()) - allowed
+        if unknown:
+            raise serializers.ValidationError(
+                f"Unknown payment mode(s) in split: {', '.join(sorted(unknown))}. "
+                f"Allowed: {', '.join(sorted(allowed))}."
+            )
         return value
 
     def validate(self, data):
@@ -372,6 +385,13 @@ class CheckoutSerializer(serializers.Serializer):
         # computing GST, so every tax figure in the snapshot is GST-compliant.
         positive_indices  = [i for i, d in enumerate(item_pass1) if d['line_base'] > 0]
         positive_subtotal = sum(item_pass1[i]['line_base'] for i in positive_indices)
+
+        # BUG-N1 FIX: Prevent discount > subtotal which produces negative grand_total.
+        if discount > positive_subtotal:
+            raise serializers.ValidationError(
+                f"Discount (₹{discount}) cannot exceed the bill subtotal "
+                f"(₹{positive_subtotal.quantize(Decimal('0.01'))})."
+            )
 
         if discount > 0 and positive_subtotal > 0:
             allocated = Decimal('0.00')

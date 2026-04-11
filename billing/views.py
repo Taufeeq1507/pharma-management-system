@@ -468,23 +468,37 @@ class GSTReportView(APIView):
         )
 
         # ── Net tax liability (GSTR-3B) ──────────────────────────────────────
+        # BUG-N3 FIX: aggregate B2B credit note taxes so they can be subtracted
+        # from output tax.  Previously only computed but never applied.
+        b2b_cn_cgst = sum(Decimal(c['cgst']) for c in b2b_credit_notes)
+        b2b_cn_sgst = sum(Decimal(c['sgst']) for c in b2b_credit_notes)
+        b2b_cn_igst = sum(Decimal(c['igst']) for c in b2b_credit_notes)
+
+        # BUG-N4 FIX: purchase returns without supplier credit note are a fresh
+        # outward supply by the pharmacy — GST must be added to output tax.
         net_cgst = (
             intra_agg['cgst']
+            + pr_fresh_supply['cgst']           # BUG-N4: fresh outward supply
             - purchase_items_agg['cgst']
             + pr_reversal['cgst']
             + adj_reversal['cgst']
+            - b2c_return_cgst - b2b_cn_cgst     # BUG-N3: sales return output tax
         )
         net_sgst = (
             intra_agg['sgst']
+            + pr_fresh_supply['sgst']           # BUG-N4
             - purchase_items_agg['sgst']
             + pr_reversal['sgst']
             + adj_reversal['sgst']
+            - b2c_return_sgst - b2b_cn_sgst     # BUG-N3
         )
         net_igst = (
             inter_agg['igst']
+            + pr_fresh_supply['igst']           # BUG-N4
             - purchase_items_agg['igst']
             + pr_reversal['igst']
             + adj_reversal['igst']
+            - b2c_return_igst - b2b_cn_igst     # BUG-N3
         )
 
         return Response({
