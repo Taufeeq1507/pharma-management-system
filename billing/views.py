@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from accounts.permissions import IsClerkOrHigher, IsOwnerOrHigher
-from .models import SalesBill, SalesReturn, CustomerParty, LedgerEntry, BillPaymentLine
+from .models import SalesBill, SalesReturn, CustomerParty, LedgerEntry, BillPaymentLine, PaymentReceipt
 from .serializers import (
     CheckoutSerializer,
     SalesBillReadSerializer,
@@ -223,16 +223,38 @@ class CashBookView(APIView):
             from_date = today.replace(day=1)
             to_date   = today
 
-        rows = (
+        # BUG-G3 FIX: Cash book must include BOTH sources of cash:
+        # 1. BillPaymentLine — collected at billing (exclude CREDIT rows since
+        #    credit extended is a receivable, not cash received)
+        # 2. PaymentReceipt — collected later for outstanding B2B credit bills
+        bill_lines = (
             BillPaymentLine.objects
             .filter(bill__bill_date__date__gte=from_date, bill__bill_date__date__lte=to_date)
+            .exclude(mode='CREDIT')
             .values('mode')
             .annotate(total=Sum('amount'))
-            .order_by('mode')
+        )
+        receipts = (
+            PaymentReceipt.objects
+            .filter(receipt_date__gte=from_date, receipt_date__lte=to_date)
+            .values('payment_mode')
+            .annotate(total=Sum('amount'))
         )
 
-        mode_totals = [{'mode': r['mode'], 'total': str(r['total'])} for r in rows]
-        grand_total = sum(r['total'] for r in rows) if rows else Decimal('0.00')
+        # Merge into a single mode → total dict
+        combined: dict = {}
+        for r in bill_lines:
+            combined[r['mode']] = combined.get(r['mode'], Decimal('0')) + r['total']
+        for r in receipts:
+            combined[r['payment_mode']] = (
+                combined.get(r['payment_mode'], Decimal('0')) + r['total']
+            )
+
+        mode_totals = sorted(
+            [{'mode': mode, 'total': str(total)} for mode, total in combined.items()],
+            key=lambda x: x['mode'],
+        )
+        grand_total = sum(combined.values()) if combined else Decimal('0.00')
 
         return Response({
             'period': {
@@ -334,34 +356,38 @@ class GSTReportView(APIView):
         b2c_summary = list(rate_map.values())
 
         # ── HSN Summary (for GSTR-1 Table 12) ───────────────────────────────
-        all_items = SalesItem.objects.filter(
-            sales_bill__bill_date__date__gte=date_from,
-            sales_bill__bill_date__date__lte=date_to,
-        ).select_related('medicine')
-
-        hsn_map = {}
-        for item in all_items:
-            hsn  = item.medicine.hsn_code or 'UNKNOWN'
-            uqc  = item.medicine.uqc
-            name = item.medicine.name
-            key  = f"{hsn}-{uqc}"
-            if key not in hsn_map:
-                hsn_map[key] = {
-                    'hsn_code': hsn, 'description': name, 'uqc': uqc,
-                    'total_qty': 0,
-                    'taxable_value': Decimal('0'), 'gst_rate': str(item.gst_percentage),
-                    'cgst': Decimal('0'), 'sgst': Decimal('0'), 'igst': Decimal('0'),
-                }
-            e = hsn_map[key]
-            e['total_qty']      += item.quantity
-            e['taxable_value']  += item.taxable_value
-            e['cgst']           += item.cgst_amount
-            e['sgst']           += item.sgst_amount
-            e['igst']           += item.igst_amount
+        # BUG-G1 FIX: use SalesItem.hsn_code (frozen at sale time) — not the
+        # live medicine master — so HSN corrections don't distort past periods.
+        # BUG-G2 FIX: aggregate entirely in the DB (GROUP BY hsn_code + uqc +
+        # gst_percentage) instead of loading all rows into Python memory.
+        hsn_rows = (
+            SalesItem.objects
+            .filter(
+                sales_bill__bill_date__date__gte=date_from,
+                sales_bill__bill_date__date__lte=date_to,
+            )
+            .values('hsn_code', 'uqc', 'gst_percentage')
+            .annotate(
+                total_qty=Sum('quantity'),
+                taxable=Coalesce(Sum('taxable_value'), Decimal('0')),
+                cgst=Coalesce(Sum('cgst_amount'),    Decimal('0')),
+                sgst=Coalesce(Sum('sgst_amount'),    Decimal('0')),
+                igst=Coalesce(Sum('igst_amount'),    Decimal('0')),
+            )
+            .order_by('hsn_code')
+        )
         hsn_summary = [
-            {**v, 'taxable_value': str(v['taxable_value']), 'cgst': str(v['cgst']),
-             'sgst': str(v['sgst']), 'igst': str(v['igst'])}
-            for v in hsn_map.values()
+            {
+                'hsn_code':     r['hsn_code'] or 'UNKNOWN',
+                'uqc':          r['uqc'] or 'NOS',
+                'gst_rate':     str(r['gst_percentage']),
+                'total_qty':    r['total_qty'],
+                'taxable_value':str(r['taxable']),
+                'cgst':         str(r['cgst']),
+                'sgst':         str(r['sgst']),
+                'igst':         str(r['igst']),
+            }
+            for r in hsn_rows
         ]
 
         # ── ITC from Purchases (GSTR-3B Table 4A) ───────────────────────────

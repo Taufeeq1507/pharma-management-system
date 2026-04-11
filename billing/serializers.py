@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 from decimal import Decimal
 from .models import (
@@ -283,7 +284,7 @@ class CheckoutSerializer(serializers.Serializer):
                 # Same-window exchange
                 return_batch = InventoryBatch.objects.select_for_update().filter(
                     medicine_id=medicine_id, medicine__is_active=True
-                ).order_by('expiry_date').first()
+                ).order_by('expiry_date', 'mrp').first()
                 if not return_batch:
                     errors[str(medicine_id)] = "Cannot return: No batch found in stock."
                     continue
@@ -336,7 +337,9 @@ class CheckoutSerializer(serializers.Serializer):
         # distribute the bill-level discount in the next step.
         item_pass1 = []
         for batch, qty, free_qty, discount_pct, uom, pack_qty in deduction_plan:
-            gst_pct      = batch.medicine.default_gst_percentage
+            # BUG-S1 FIX: use the batch's actual GST% (from purchase invoice),
+            # not the medicine master default which may have been updated since.
+            gst_pct      = batch.gst_percentage
             mrp_per_strip = batch.mrp
 
             if qty != 0:
@@ -438,12 +441,15 @@ class CheckoutSerializer(serializers.Serializer):
                 snap_qty  = qty
                 snap_free = free_qty
 
+            hsn_code = batch.medicine.hsn_code or ''
+            uqc      = batch.medicine.uqc or 'NOS'
+
             items_snapshot.append({
                 "medicine_id":         str(batch.medicine.id),
                 "medicine_name":       batch.medicine.name,
-                # BUG-A FIX: HSN code frozen in snapshot for GSTR-1 Table 12
-                "hsn_code":            batch.medicine.hsn_code or "",
-                "uqc":                 batch.medicine.uqc,
+                # BUG-A FIX: HSN + UQC frozen in snapshot for GSTR-1 Table 12
+                "hsn_code":            hsn_code,
+                "uqc":                 uqc,
                 "batch_number":        batch.batch_number,
                 "expiry_date":         str(batch.expiry_date),
                 "quantity":            snap_qty,
@@ -452,6 +458,8 @@ class CheckoutSerializer(serializers.Serializer):
                 "mrp_per_strip":       str(mrp_per_strip),
                 "sale_rate_per_unit":  str(sale_rate_per_unit),
                 "discount_percentage": str(discount_pct),
+                # BUG-S2 FIX: expose bill_discount_share per item for CA audit trail
+                "bill_discount_share": str(d['bill_discount_share']),
                 # BUG-C FIX: taxable_value is post-bill-discount, fully GST-compliant
                 "taxable_value":       str(adjusted_taxable),
                 "gst_percentage":      str(gst_pct),
@@ -466,6 +474,10 @@ class CheckoutSerializer(serializers.Serializer):
                 'medicine':            batch.medicine,
                 'inventory_batch':     batch,
                 'batch_number':        batch.batch_number,
+                # BUG-G1 FIX: freeze HSN + UQC on SalesItem for correct GSTR-1
+                # Table 12 aggregation even if medicine master changes later.
+                'hsn_code':            hsn_code,
+                'uqc':                 uqc,
                 'quantity':            qty,
                 'free_quantity':       free_qty,
                 'mrp_per_strip':       mrp_per_strip,
@@ -536,15 +548,22 @@ class CheckoutSerializer(serializers.Serializer):
             locked_customer = CustomerParty.objects.select_for_update().get(
                 id=customer_obj.id
             )
-            if locked_customer.credit_limit > 0:
-                new_balance = locked_customer.outstanding_balance + credit_amount
-                if new_balance > locked_customer.credit_limit:
-                    raise serializers.ValidationError(
-                        f"This sale of ₹{credit_amount} would exceed "
-                        f"{locked_customer.name}'s credit limit of "
-                        f"₹{locked_customer.credit_limit}. "
-                        f"Current outstanding: ₹{locked_customer.outstanding_balance}."
-                    )
+            # BUG-S3 FIX: credit_limit=0 means no credit facility is set.
+            # Treat it as "credit not allowed" rather than "unlimited credit".
+            if locked_customer.credit_limit == 0:
+                raise serializers.ValidationError(
+                    f"{locked_customer.name} has no credit facility "
+                    f"(credit limit is ₹0). Set a credit limit before "
+                    f"allowing credit sales."
+                )
+            new_balance = locked_customer.outstanding_balance + credit_amount
+            if new_balance > locked_customer.credit_limit:
+                raise serializers.ValidationError(
+                    f"This sale of ₹{credit_amount} would exceed "
+                    f"{locked_customer.name}'s credit limit of "
+                    f"₹{locked_customer.credit_limit}. "
+                    f"Current outstanding: ₹{locked_customer.outstanding_balance}."
+                )
             locked_customer.outstanding_balance += credit_amount
             locked_customer.save()
 
@@ -636,6 +655,13 @@ class SalesReturnSerializer(serializers.ModelSerializer):
                 "This sales item does not belong to the provided sales bill."
             )
 
+        # BUG-R3 FIX: free-scheme items have quantity=0 — returning them
+        # would cause a ZeroDivisionError in the refund calculation.
+        if sales_item.quantity == 0:
+            raise serializers.ValidationError(
+                "Cannot return a free-scheme item — no billed quantity exists."
+            )
+
         already_returned = sum(r.return_quantity for r in sales_item.returns.all())
         returnable = sales_item.quantity - already_returned
         if return_qty > returnable:
@@ -696,6 +722,25 @@ class SalesReturnSerializer(serializers.ModelSerializer):
         pharmacy.save(update_fields=['cn_counter', 'invoice_counter', 'current_fy'])
         credit_note_number = f"CN/{fy_label}/{pharmacy.cn_counter:05d}"
 
+        # ── BUG-R1 FIX: Re-validate return qty under lock ─────────────────────
+        # validate() read already_returned without a lock. Under concurrent
+        # return requests for the same SalesItem both could pass validate()
+        # and together over-return. Re-check here inside the atomic transaction.
+        locked_item = SalesItem.objects.select_for_update().get(
+            pk=validated_data['sales_item'].pk
+        )
+        already_returned = (
+            SalesReturn.objects.filter(sales_item=locked_item)
+            .aggregate(total=Sum('return_quantity'))['total'] or 0
+        )
+        returnable = locked_item.quantity - already_returned
+        if validated_data['return_quantity'] > returnable:
+            raise serializers.ValidationError(
+                f"Return quantity exceeds returnable amount "
+                f"({returnable} remaining). A concurrent return may have "
+                f"already been processed."
+            )
+
         # ── Restore stock to exact source batch ───────────────────────────────
         batch = InventoryBatch.objects.select_for_update().get(pk=self._batch.pk)
         batch.available_quantity += validated_data['return_quantity']
@@ -718,7 +763,12 @@ class SalesReturnSerializer(serializers.ModelSerializer):
                     balance_reduction = refund_amount
 
                 if balance_reduction > Decimal('0.00'):
-                    locked_customer.outstanding_balance -= balance_reduction
+                    # BUG-R2 FIX: floor at zero — concurrent payments could
+                    # have already reduced the balance below balance_reduction.
+                    locked_customer.outstanding_balance = max(
+                        Decimal('0.00'),
+                        locked_customer.outstanding_balance - balance_reduction,
+                    )
                     locked_customer.save()
 
         # ── Persist the SalesReturn with full GST breakdown ───────────────────
@@ -787,6 +837,14 @@ class PaymentReceiptSerializer(serializers.ModelSerializer):
         customer = CustomerParty.objects.select_for_update().get(
             id=validated_data['customer'].id
         )
+        # BUG-PAY1 FIX: re-check balance under lock. validate() read the
+        # balance without a lock — a concurrent payment could have reduced
+        # it between validate() and now.
+        if amount > customer.outstanding_balance:
+            raise serializers.ValidationError(
+                f"Payment (₹{amount}) exceeds current outstanding balance "
+                f"(₹{customer.outstanding_balance}). Balance may have changed."
+            )
         customer.outstanding_balance -= amount
         customer.save()
 

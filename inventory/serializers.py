@@ -85,47 +85,82 @@ class PurchaseBillSerializer(serializers.ModelSerializer):
             if supplier.state and pharmacy.state:
                 is_inter_state = supplier.state.strip().lower() != pharmacy.state.strip().lower()
 
+            # ── BUG-P1 FIX: Two-pass purchase bill discount distribution ────────
+            # The bill-level discount must be distributed proportionally across
+            # items BEFORE computing GST — identical to BUG-C fix for sales.
+            # Old behaviour subtracted discount post-tax → ITC was overstated
+            # by the tax component of the discount (CGST Act Section 15(3)(a)).
+
+            # Pass 1: compute each item's pre-bill-discount line_base
+            items_pass1 = []
+            for item_data in items_data:
+                qty          = item_data['quantity']
+                free_qty     = item_data.get('free_quantity', 0)
+                rate         = item_data['purchase_rate_base']
+                discount_pct = item_data.get('discount_percentage', Decimal('0.00'))
+                gst          = item_data['gst_percentage']
+
+                line_gross    = rate * qty
+                line_discount = line_gross * (discount_pct / Decimal('100'))
+                line_base     = line_gross - line_discount
+
+                items_pass1.append({
+                    'item_data':    item_data,
+                    'qty':          qty,
+                    'free_qty':     free_qty,
+                    'gst':          gst,
+                    'line_base':    line_base,
+                    'bill_disc':    Decimal('0.00'),
+                })
+
+            # Pass 1b: distribute bill-level discount proportionally
+            positive_indices  = [i for i, d in enumerate(items_pass1) if d['line_base'] > 0]
+            positive_subtotal = sum(items_pass1[i]['line_base'] for i in positive_indices)
+            if discount > 0 and positive_subtotal > 0:
+                allocated = Decimal('0.00')
+                for i in positive_indices[:-1]:
+                    share = (
+                        items_pass1[i]['line_base'] / positive_subtotal * discount
+                    ).quantize(Decimal('0.01'))
+                    items_pass1[i]['bill_disc'] = share
+                    allocated += share
+                if positive_indices:
+                    items_pass1[positive_indices[-1]]['bill_disc'] = discount - allocated
+
+            # Pass 2: compute tax on adjusted base, create PurchaseItems, update stock
             running_subtotal = Decimal('0.00')
             running_tax      = Decimal('0.00')
             running_cgst     = Decimal('0.00')
             running_sgst     = Decimal('0.00')
             running_igst     = Decimal('0.00')
 
-            for item_data in items_data:
-                qty      = item_data['quantity']
-                free_qty = item_data.get('free_quantity', 0)
-                rate     = item_data['purchase_rate_base']
-                discount_pct = item_data.get('discount_percentage', Decimal('0.00'))
-                gst      = item_data['gst_percentage']
+            for d in items_pass1:
+                item_data    = d['item_data']
+                qty          = d['qty']
+                free_qty     = d['free_qty']
+                gst          = d['gst']
+                adjusted_base = d['line_base'] - d['bill_disc']
 
-                # FINANCIAL CALC: strips × rate (rate is per-strip)
-                line_gross    = rate * qty
-                line_discount = line_gross * (discount_pct / Decimal('100'))
-                line_base     = line_gross - line_discount
-                
-                line_tax      = line_base * (gst / Decimal('100'))
-                
-                # Tax breakdown per item
-                cgst_amt = Decimal('0.00')
-                sgst_amt = Decimal('0.00')
-                igst_amt = Decimal('0.00')
+                line_tax  = adjusted_base * (gst / Decimal('100'))
+                line_tax  = line_tax.quantize(Decimal('0.01'))
 
+                cgst_amt = sgst_amt = igst_amt = Decimal('0.00')
                 if is_inter_state:
                     igst_amt = line_tax
                 else:
-                    cgst_amt = line_tax / Decimal('2')
-                    sgst_amt = line_tax / Decimal('2')
+                    cgst_amt = (line_tax / Decimal('2')).quantize(Decimal('0.01'))
+                    sgst_amt = line_tax - cgst_amt
 
                 PurchaseItem.objects.create(
                     purchase_bill=bill,
-                    taxable_value=line_base,
+                    taxable_value=adjusted_base,
                     cgst_amount=cgst_amt,
                     sgst_amount=sgst_amt,
                     igst_amount=igst_amt,
                     **item_data
                 )
 
-                running_subtotal += line_base
+                running_subtotal += adjusted_base
                 running_tax      += line_tax
                 running_cgst     += cgst_amt
                 running_sgst     += sgst_amt
@@ -135,14 +170,10 @@ class PurchaseBillSerializer(serializers.ModelSerializer):
                 pack_qty    = item_data['medicine'].pack_qty or 1
                 total_units = (qty + free_qty) * pack_qty
 
-                # BUG-I: store per-tablet purchase rate (pre-GST, pre-discount gross rate)
-                # Used for COGS reporting and GSTR-3B ITC reversal calculations.
-                per_tablet_rate = (item_data['purchase_rate_base'] / Decimal(str(pack_qty))).quantize(Decimal('0.0001'))
+                per_tablet_rate = (
+                    item_data['purchase_rate_base'] / Decimal(str(pack_qty))
+                ).quantize(Decimal('0.0001'))
 
-                # Lookup by (medicine, batch_number) only — MRP and GST% are NOT
-                # part of the identity key. Including them caused a duplicate batch
-                # row whenever a supplier revised the MRP on the same physical batch,
-                # resulting in two separate stock entries for the same physical stock.
                 batch, created = InventoryBatch.objects.get_or_create(
                     medicine=item_data['medicine'],
                     batch_number=item_data['batch_number'],
@@ -154,18 +185,18 @@ class PurchaseBillSerializer(serializers.ModelSerializer):
                         'purchase_rate':      per_tablet_rate,
                     }
                 )
-
                 if not created:
                     batch.available_quantity += total_units
                     batch.purchase_rate = per_tablet_rate
                     batch.save()
 
-            bill.subtotal    = running_subtotal
-            bill.total_tax   = running_tax
-            bill.total_cgst  = running_cgst
-            bill.total_sgst  = running_sgst
-            bill.total_igst  = running_igst
-            bill.grand_total = running_subtotal + running_tax - discount
+            # grand_total: discount already embedded in subtotal (distributed pre-GST)
+            bill.subtotal    = running_subtotal.quantize(Decimal('0.01'))
+            bill.total_tax   = running_tax.quantize(Decimal('0.01'))
+            bill.total_cgst  = running_cgst.quantize(Decimal('0.01'))
+            bill.total_sgst  = running_sgst.quantize(Decimal('0.01'))
+            bill.total_igst  = running_igst.quantize(Decimal('0.01'))
+            bill.grand_total = (running_subtotal + running_tax).quantize(Decimal('0.01'))
             bill.save()
 
         return bill

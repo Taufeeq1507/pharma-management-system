@@ -104,6 +104,13 @@ class SalesItem(TenantModel):
         help_text="Free tablets given (Buy X Get Y). Deducts from physical stock, but does NOT affect line_total or taxes."
     )
 
+    # GST compliance — frozen at sale time so HSN summary (GSTR-1 Table 12) is
+    # always correct even if the medicine master is updated after the sale.
+    hsn_code = models.CharField(max_length=20, blank=True, default='',
+                    help_text="HSN code frozen at time of sale for GSTR-1 Table 12")
+    uqc      = models.CharField(max_length=10, blank=True, default='NOS',
+                    help_text="Unit Quantity Code frozen at time of sale")
+
     # Prices frozen at time of sale — independent of future InventoryBatch changes
     mrp_per_strip      = models.DecimalField(max_digits=10, decimal_places=2)
     sale_rate_per_unit = models.DecimalField(max_digits=10, decimal_places=4)  # per tablet
