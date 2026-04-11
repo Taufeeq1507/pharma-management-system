@@ -631,8 +631,12 @@ class CheckoutSerializer(serializers.Serializer):
                 bill.amount_paid    = grand_total
                 bill.save(update_fields=['payment_status', 'amount_paid'])
         elif payment_mode in ['CASH', 'UPI']:
+            # For same-window exchange bills grand_total can be ≤ 0 (net refund).
+            # amount_paid tracks cash received, so floor it at 0 — a negative
+            # amount_paid is meaningless. The BillPaymentLine carries the signed
+            # amount for the cash book (correctly reduces the day's tally).
             bill.payment_status = 'PAID'
-            bill.amount_paid    = grand_total
+            bill.amount_paid    = max(Decimal('0.00'), grand_total)
             bill.save(update_fields=['payment_status', 'amount_paid'])
 
         # ── Step 7: BillPaymentLine — normalised cash-book rows (BUG-H FIX) ──
