@@ -144,6 +144,18 @@ class CheckoutSerializer(serializers.Serializer):
                 "Credit sales require a registered Customer/Patient profile."
             )
 
+        # BUG-O19 FIX: SPLIT payment with a CREDIT component also requires a
+        # customer_id. Without one, outstanding_balance and LedgerEntry are both
+        # skipped in create() → the credit debt is completely invisible to the system.
+        if data.get('payment_mode') == 'SPLIT':
+            split_payments = data.get('split_payments', {})
+            credit_in_split = Decimal(str(split_payments.get('CREDIT', '0.00')))
+            if credit_in_split > 0 and not data.get('customer_id'):
+                raise serializers.ValidationError(
+                    "A credit component in a split payment requires a registered "
+                    "Customer/Patient profile so the outstanding balance can be tracked."
+                )
+
         items = data.get('items', [])
         negative_items = [item for item in items if item.get('quantity', 0) < 0]
 
@@ -228,7 +240,14 @@ class CheckoutSerializer(serializers.Serializer):
         is_inter_state = False
 
         if customer_id:
-            customer_obj = CustomerParty.objects.get(id=customer_id)
+            # BUG-O4 FIX: get() raises DoesNotExist → 500. Wrap in try/except
+            # so an invalid customer_id returns a 400 validation error instead.
+            try:
+                customer_obj = CustomerParty.objects.get(id=customer_id)
+            except CustomerParty.DoesNotExist:
+                raise serializers.ValidationError(
+                    {"customer_id": "Customer not found. Please check the customer ID."}
+                )
             if (customer_obj.customer_type == 'B2B' and
                     customer_obj.gstin and pharmacy.gstin and
                     len(customer_obj.gstin) >= 2 and len(pharmacy.gstin) >= 2):
@@ -801,6 +820,27 @@ class SalesReturnSerializer(serializers.ModelSerializer):
             igst_amount        = self._cn_igst,
             **validated_data
         )
+
+        # ── BUG-O5 FIX: Update bill payment tracking after return ──────────────
+        # Without this, a returned CREDIT bill stays UNPAID/amount_paid=0.
+        # The FIFO allocator in PaymentReceiptSerializer would then target the
+        # returned bill first when the customer pays later, misallocating the
+        # payment away from their actual outstanding invoices.
+        #
+        # Strategy: treat the refund as a "credit applied" — increase amount_paid
+        # by balance_reduction so the bill's net due = grand_total - amount_paid
+        # correctly reflects what was settled via return.
+        if balance_reduction > Decimal('0.00'):
+            bill_locked = SalesBill.objects.select_for_update().get(pk=sales_bill.pk)
+            bill_locked.amount_paid = min(
+                bill_locked.grand_total,
+                bill_locked.amount_paid + balance_reduction,
+            )
+            if bill_locked.amount_paid >= bill_locked.grand_total:
+                bill_locked.payment_status = 'PAID'
+            elif bill_locked.amount_paid > Decimal('0.00'):
+                bill_locked.payment_status = 'PARTIAL'
+            bill_locked.save(update_fields=['payment_status', 'amount_paid'])
 
         # ── BUG-G FIX: Immutable ledger entry ─────────────────────────────────
         if balance_reduction > Decimal('0.00') and locked_customer:

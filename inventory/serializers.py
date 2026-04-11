@@ -2,6 +2,7 @@
 from decimal import Decimal
 from rest_framework import serializers
 from django.db import transaction
+from django.db.models import F
 from accounts.utils import get_current_pharmacy
 from .models import (
     Supplier, MedicineMaster, PurchaseBill, PurchaseItem,
@@ -186,9 +187,16 @@ class PurchaseBillSerializer(serializers.ModelSerializer):
                     }
                 )
                 if not created:
-                    batch.available_quantity += total_units
-                    batch.purchase_rate = per_tablet_rate
-                    batch.save()
+                    # BUG-O2 FIX: use a DB-level F() expression instead of a
+                    # read-modify-write (batch.qty += n; batch.save()). Two
+                    # concurrent purchase bills for the same batch would both
+                    # read the same available_quantity and the second save would
+                    # silently overwrite the first, losing stock. F() translates
+                    # to UPDATE … SET qty = qty + n which is atomic in Postgres.
+                    InventoryBatch.objects.filter(pk=batch.pk).update(
+                        available_quantity=F('available_quantity') + total_units,
+                        purchase_rate=per_tablet_rate,
+                    )
 
             # grand_total: discount already embedded in subtotal (distributed pre-GST)
             bill.subtotal    = running_subtotal.quantize(Decimal('0.01'))
@@ -297,7 +305,21 @@ class PurchaseReturnSerializer(serializers.ModelSerializer):
             # Re-fetch with a lock to prevent concurrent returns from reading
             # the same stale available_quantity and producing a wrong final count.
             batch = InventoryBatch.objects.select_for_update().get(pk=self._batch.pk)
-            batch.available_quantity -= validated_data['return_quantity']
+
+            # BUG-O3 FIX: validate() checked available_quantity WITHOUT a lock.
+            # Two concurrent returns for the same batch can both pass validate()
+            # and together over-return, producing negative stock. Re-verify under
+            # the exclusive lock before we commit the deduction.
+            return_qty = validated_data['return_quantity']
+            if return_qty > batch.available_quantity:
+                raise serializers.ValidationError(
+                    f"Return quantity ({return_qty} tablets) now exceeds available "
+                    f"stock ({batch.available_quantity} tablets) for batch "
+                    f"'{batch.batch_number}'. A concurrent update may have changed "
+                    f"the stock — please refresh and retry."
+                )
+
+            batch.available_quantity -= return_qty
             batch.save()
 
             # BUG-F: compute CGST/SGST/IGST split for GSTR-3B Table 4(B)(1) ITC reversal.
