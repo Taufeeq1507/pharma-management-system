@@ -1,226 +1,163 @@
-# PharmaCare ERP
+# PharmaCare ERP — Backend
 
-A full-stack pharmacy management system built with **Django REST Framework** and **React 18**. Handles the complete operational workflow of an independent pharmacy — from purchase to sale, warehouse to GST filing — with a focus on Indian GST compliance.
-
----
-
-## Features
-
-### Billing & Sales
-- Fast counter billing with FEFO (First-Expiry-First-Out) stock deduction
-- Payment modes: Cash, UPI, Credit, Split (any combination)
-- B2B and B2C customer support with registered party profiles
-- Free scheme items (Buy X Get Y) — deduct stock, zero GST impact
-- Same-window exchange (return + sale on one bill, capped at ₹500)
-- Drug schedule compliance — Narcotic drugs require customer name and address
-- FY-aware sequential invoice numbering (INV/2025-26/00001)
-- Frozen bill snapshot — reprint-safe even after medicine master changes
-
-### GST Compliance
-- Two-pass bill-level discount distribution **pre-GST** (CGST Act §15(3)(a))
-- Automatic intra-state (CGST+SGST) vs inter-state (IGST) routing
-- HSN code and UQC frozen on each sale line for accurate GSTR-1 Table 12
-- Sequential credit note numbering (CN/2025-26/00001)
-- GSTR-1 and GSTR-3B report with net-of-returns tax figures
-
-### GST Report Covers
-| Report | Tables |
-|--------|--------|
-| GSTR-3B | Table 3.1 (outward, net of credit notes), Table 4A (ITC), Table 4B1 (ITC reversal — purchase returns), Table 4B2 (ITC reversal — write-offs §17(5)(h)) |
-| GSTR-1 | Table 4 (B2B invoices), Table 7 (B2C consolidated), Table 8 (nil-rated), Table 9B (B2B credit notes), Table 12 (HSN summary) |
-
-### Inventory & Purchase
-- Supplier management with soft-delete
-- Purchase bill entry with two-pass discount distribution
-- FEFO batch management — quantities always in individual units (tablets)
-- Batch-level MRP and GST% tracking
-- Stock search by medicine name, salt name, or barcode
-
-### Warehouse Management
-- Named block and shelf system (e.g. Block A, Shelf 3 → "A-3")
-- One medicine per batch per shelf constraint (prevents FEFO confusion)
-- Physical stock sync — submit actual counts, server computes delta and ITC reversal
-- Unassigned batch queue for new stock pending placement
-- Immutable adjustment log with GST ITC reversal amounts
-
-### Customer Ledger & Receivables
-- Double-entry immutable ledger (Sale → Debit, Payment/Return → Credit)
-- Credit limit enforcement under database lock
-- FIFO payment allocation across oldest unpaid invoices
-- Targeted allocation — pin a payment to a specific invoice
-- Full ledger statement with date range filtering
-
-### Supplier Ledger & Payables
-- Mirror of customer ledger on the payables side
-- FIFO allocation across oldest unpaid purchase bills
-- Purchase returns with supplier credit note → ITC reversal
-- Purchase returns without credit note → fresh outward supply (adds to GST output tax)
-
-### Returns
-- **Sales returns:** Linked to original invoice and exact batch; partial returns supported; refund modes: CASH / UPI / CREDIT_NOTE
-- **Purchase returns:** Server-computed refund from original purchase rate; GST treatment depends on whether supplier issues a credit note
-
-### Cash Book
-- Aggregates BillPaymentLine (billing collections) + PaymentReceipt (later payments)
-- Cash/UPI refunds automatically appear as negative lines
-- Grouped by payment mode with net grand total
-
-### Expiry & Return Alerts *(model-ready, Celery task built)*
-- Per-supplier configurable return window (e.g. Sun Pharma: 90 days before expiry)
-- Alert fires `advance_notice_days` before the return deadline
-- GST intelligence: ITC at risk, GST quarter deadline warning
-- Sell-vs-return recommendation based on sales velocity
+A production-grade pharmacy management REST API built with **Django REST Framework** and **PostgreSQL**. Covers the complete operational workflow of an independent Indian pharmacy — purchase, billing, warehouse, accounting, and GST compliance — with a focus on correctness under concurrent load.
 
 ---
 
 ## Tech Stack
 
-**Backend**
-- Python 3.12 / Django 6.0 / Django REST Framework 3.16
-- PostgreSQL
-- SimpleJWT for authentication
-- Gunicorn + WhiteNoise for production
-
-**Frontend**
-- React 19 / Vite 8
-- Redux Toolkit + React Router v7
-- Recharts for dashboard charts
-- Axios for API calls
+- **Python 3.12** / **Django 6.0** / **Django REST Framework 3.16**
+- **PostgreSQL** — row-level multi-tenancy
+- **SimpleJWT** — phone-number-based JWT authentication
+- **Gunicorn + WhiteNoise** — production serving
 
 ---
 
 ## Architecture
 
-```
-Browser (React + Redux)
-    │  JWT + REST/JSON
-    ▼
-Django REST Framework
-    ├── accounts/   — Auth, multi-tenancy, user roles
-    ├── billing/    — Sales, returns, customers, GST report
-    └── inventory/  — Medicines, purchases, warehouse, suppliers
-    │
-    ▼
-PostgreSQL  (row-level tenancy via pharmacy_id FK)
-```
-
 ### Multi-Tenancy
-Every data row belongs to a `Pharmacy`. A custom Django manager automatically filters all queries to the current pharmacy from thread-local context — no data leaks between tenants.
+Every data row belongs to a `Pharmacy`. A custom Django manager (`PharmacyManager`) automatically appends `.filter(pharmacy=current_pharmacy)` to every queryset using thread-local context — no cross-tenant data leaks at the ORM level.
 
-Hierarchy: `Organization` → `Pharmacy` (branch) → All records. Supports both standalone pharmacies and multi-branch chains.
+```
+Organization  (pharmacy chain / group)
+    └── Pharmacy  (one branch or standalone store)
+            └── All records (medicines, bills, customers …)
+```
 
 ### User Roles
 
-| Level | Role | Access |
-|-------|------|--------|
-| 1 | Clerk | Billing, stock search, customer lookup |
+| Level | Role | Scope |
+|-------|------|-------|
+| 1 | Clerk | Billing, stock search |
 | 2 | Owner | Full access to one pharmacy |
-| 4 | Chain Owner | Multi-branch access |
+| 4 | Chain Owner | Across all branches in their organization |
 | 5 | SaaS Admin | Unrestricted |
 
 ---
 
-## Project Structure
+## Modules
 
-```
-├── accounts/          — Auth, Pharmacy, Organization, CustomUser
-├── billing/           — SalesBill, SalesReturn, CustomerParty, LedgerEntry, GST report
-├── inventory/         — Supplier, MedicineMaster, PurchaseBill, InventoryBatch, Warehouse
-├── backend_core/      — Django settings, root URL config
-├── Frontend/
-│   └── src/
-│       ├── pages/     — Billing, History, Inventory, Warehouse, Ledger, GST, Suppliers, Dashboard
-│       ├── api/       — Axios API layer
-│       └── store/     — Redux slices
-├── ERP_MASTER_REFERENCE.md  — Full business logic reference (no code required)
-├── requirements.txt
-└── docker-compose.yml
-```
+### Billing & Sales
+- FEFO stock deduction under `select_for_update()` — prevents concurrent oversell
+- Payment modes: Cash, UPI, Credit, Split (any combination)
+- Two-pass bill-level discount distribution **pre-GST** per CGST Act §15(3)(a)
+- GST back-calculated from MRP; intra/inter-state routed via GSTIN prefix comparison
+- Free scheme quantities (Buy X Get Y) — deduct stock, zero revenue impact
+- FY-aware sequential invoice numbering (INV/2025-26/00001) with auto-reset on April 1
+- Frozen JSON snapshot on every bill — reprint-safe even after master data changes
+- Same-window exchange (negative-quantity items on a bill, ≤₹500 cap)
+- Drug schedule compliance — Narcotic items enforce customer name + address at server level
 
----
+### Inventory & Purchase
+- Supplier master with soft-delete and running payable balance
+- Purchase bill with identical two-pass discount distribution and automatic batch upsert
+- Stock always stored in **individual units (tablets)**; strips↔tablets conversion via `pack_qty`
+- Atomic stock increment using `F()` expressions — safe under concurrent purchase bills
 
-## API Overview
+### Warehouse Management
+- Block → Shelf → Batch hierarchy (e.g. Block A, Shelf 3)
+- One medicine per batch per shelf constraint — enforced at application layer
+- Physical stock sync: submit actual counts, server computes delta, writes immutable `StockAdjustment`, triggers GST ITC reversal calculation for shrinkage (§17(5)(h))
 
-| Module | Base URL | Key Endpoints |
-|--------|----------|--------------|
-| Auth | `/api/auth/` | `POST /token/`, `POST /token/refresh/` |
-| Billing | `/api/billing/` | `checkout/`, `history/`, `return/`, `receipt/`, `gst-report/`, `cash-book/`, `ledger/<id>/` |
-| Customers | `/api/billing/customers/` | List, search, create |
-| Inventory | `/api/inventory/` | `medicines/`, `purchase/`, `stock/`, `search/`, `return/` |
-| Warehouse | `/api/inventory/` | `blocks/`, `shelves/`, `batches/unassigned/`, `sync/` |
-| Suppliers | `/api/inventory/suppliers/` | CRUD, `payment/`, `ledger/` |
+### Sales Returns & Credit Notes
+- Linked to the original invoice and exact source batch — no guessing on stock restoration
+- Partial returns supported across multiple requests
+- `refund_mode` field: CASH / UPI / CREDIT_NOTE — each drives different cash-book and ledger entries
+- Auto-detected for single-mode bills; required from clerk for SPLIT bills
+- Sequential credit note numbering (CN/2025-26/00001)
+- Proportional GST breakdown preserved on every credit note
 
----
+### Purchase Returns
+- Refund amount computed server-side from original `PurchaseItem.purchase_rate_base` — client cannot supply an arbitrary figure
+- Two GST paths: with supplier credit note → ITC reversal (GSTR-3B Table 4B1); without → treated as fresh outward supply (adds to output tax)
 
-## Local Setup
+### Customer Ledger & Receivables
+- Immutable double-entry `LedgerEntry` on every balance change (Sale → Debit, Payment/Return → Credit)
+- Credit limit enforced under `select_for_update()` before any credit sale
+- FIFO payment allocation across oldest unpaid invoices; targeted allocation to a specific invoice also supported
+- Full ledger statement reconstructible for any date range from the entry log alone
 
-### Backend
+### Supplier Ledger & Payables
+- Mirror of customer ledger on the payables side
+- FIFO allocation across oldest unpaid purchase bills on every supplier payment
 
-```bash
-# Clone and set up virtualenv
-git clone https://github.com/your-username/pharma-erp.git
-cd pharma-erp
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+### Cash Book
+- Aggregates `BillPaymentLine` (billing-time collections) and `PaymentReceipt` (later payments)
+- CASH_REFUND / UPI_REFUND lines carry negative amounts — cash book net is correct without any application-layer arithmetic
+- Grouped by payment mode; grand total = net cash in till
 
-# Environment variables (.env)
-SECRET_KEY=your-secret-key
-DATABASE_URL=postgres://user:password@localhost:5432/pharmadb
-DEBUG=True
+### GST Report (GSTR-1 & GSTR-3B)
 
-# Migrate and run
-python manage.py migrate
-python manage.py createsuperuser
-python manage.py runserver
-```
+| Return | Tables Produced |
+|--------|----------------|
+| GSTR-3B | Table 3.1 outward taxable (net of credit notes, intra/inter split); Table 4A ITC from purchases; Table 4B1 ITC reversal (purchase returns with CN); Table 4B2 ITC reversal (stock write-offs §17(5)(h)) |
+| GSTR-1 | Table 4 B2B invoices; Table 7 B2C consolidated; Table 8 nil-rated/exempt; Table 9B B2B credit notes; Table 12 HSN summary with UQC quantity conversion |
 
-### Frontend
-
-```bash
-cd Frontend/temp-pos/Temprorary_PMS
-npm install
-npm run dev
-```
-
-### Docker (optional)
-
-```bash
-docker-compose up --build
-```
+Key correctness points:
+- Outward taxable aggregated at `SalesItem` level (not bill level) — excludes 0% items on mixed bills
+- Credit notes netted from both taxable value **and** tax in GSTR-3B Table 3.1
+- Unregistered B2B (no GSTIN) correctly classified as B2C in all tables
+- HSN quantities converted to UQC units using frozen `pack_qty` from sale time
 
 ---
 
-## Key Business Logic Decisions
+## API Reference
 
-**Why quantities are always in tablets, not strips:**
-Storing individual units eliminates conversion bugs. Strips are a UI concept only — the server converts using `pack_qty` at inbound and FEFO deduction time.
+### Billing — `/api/billing/`
 
-**Why GST is calculated before applying bill discount:**
-CGST Act §15(3)(a) requires trade discounts given at time of supply to reduce taxable value. Subtracting a bill-level discount post-tax would overstate output tax and ITC.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/checkout/` | Create a sale bill |
+| GET | `/history/` | All bills, newest first (`?customer_phone=`) |
+| GET | `/history/<uuid>/` | Full bill detail |
+| GET | `/customer/<phone>/` | All bills for a phone number |
+| GET/POST | `/customers/` | Search / register customers |
+| POST | `/return/` | Process a sales return |
+| POST | `/receipt/` | Record customer payment |
+| GET | `/gst-report/` | GSTR-1 + GSTR-3B (`?from=`, `?to=`) |
+| GET | `/ledger/<customer_id>/` | Customer ledger statement |
+| GET | `/cash-book/` | Cash book by mode (`?from_date=`, `?to_date=`) |
 
-**Why the ledger is immutable:**
-Mutable balances can be corrupted by concurrent updates and leave no audit trail. Every balance change writes an immutable `LedgerEntry` row. A CA can reconstruct any balance for any date range from the ledger alone.
+### Inventory — `/api/inventory/`
 
-**Why FEFO uses `select_for_update()`:**
-Without a database-level lock, two concurrent sales of the same medicine can both read the same `available_quantity` and together oversell — producing negative stock. The lock serializes access to each batch row.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET/POST | `/medicines/` | Medicine master |
+| GET/POST | `/purchase/` | Purchase bills |
+| GET | `/stock/` | Live stock with batch detail |
+| GET | `/search/` | Medicine search (`?q=`) |
+| POST | `/return/` | Purchase return to supplier |
+| GET/POST | `/suppliers/` | Supplier master |
+| POST | `/suppliers/<id>/payment/` | Record supplier payment |
+| GET | `/suppliers/<id>/ledger/` | Supplier ledger statement |
+| GET/POST | `/blocks/` | Warehouse blocks |
+| GET | `/blocks/<letter>/shelves/` | Shelves with assigned batches |
+| GET | `/batches/unassigned/` | Batches pending shelf placement |
+| POST | `/batches/<id>/assign/` | Assign batch to shelf |
+| POST | `/sync/` | Physical stock count sync |
+| GET | `/adjustments/` | Stock adjustment history |
+
+---
+
+## Data Integrity Highlights
+
+- All multi-step writes are wrapped in `transaction.atomic()`
+- Consistent lock acquisition order prevents deadlocks across concurrent requests
+- `LedgerEntry`, `SupplierLedgerEntry`, `StockAdjustment`, `SalesItem`, `PaymentAllocation` — immutable after creation
+- Concurrent stock deduction uses `select_for_update()` on `InventoryBatch` rows
+- Concurrent invoice numbering uses `select_for_update()` on `Pharmacy` row with FY-rollover detection
+- Stock increments on purchase use `F('available_quantity') + n` — atomic at DB level
 
 ---
 
 ## Roadmap
 
-- [ ] Thermal receipt printer (ESC/POS)
-- [ ] Barcode scanner integration (field exists, UI pending)
-- [ ] Expiry alert dashboard (backend complete)
-- [ ] Reorder level alerts
-- [ ] Drug scheme management (1+1, brand discounts)
+- [ ] Thermal receipt printer support (ESC/POS)
+- [ ] Barcode scanner integration (`barcode` field exists on medicine master)
+- [ ] Expiry / return alert dashboard (models + Celery task built, API pending)
 - [ ] Opening balance import for Marg/GoFrugal migration
-- [ ] Narcotic register (Form 6/7/8)
-- [ ] Offline mode (PWA / local sync)
+- [ ] Narcotic register (Form 6/7/8 compliance)
 - [ ] GST portal direct filing API
-- [ ] Profit & Loss report
 - [ ] Test suite
 
 ---
-
-
